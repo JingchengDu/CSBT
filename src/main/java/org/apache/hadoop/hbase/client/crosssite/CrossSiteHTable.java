@@ -40,6 +40,7 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -63,7 +64,6 @@ import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.RetriesExhaustedWithDetailsException;
 import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.client.RowLock;
 import org.apache.hadoop.hbase.client.RowMutations;
@@ -349,40 +349,51 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       rows.add(action);
     }
 
-    List<String> addresses = new ArrayList<String>();
-    List<Throwable> exceptions = new ArrayList<Throwable>();
-    for (Entry<String, List<Row>> entry : tableMap.entrySet()) {
-      List<Row> rows = entry.getValue();
-      Object[] rs = new Object[rows.size()];
-      try {
-        HTableInterface table = getClusterHTable(entry.getKey());
-        table.batch(rows, rs);
-      } catch (IOException e) {
-        // need clear the cached HTable if the connection is refused
-        clearCachedTable(entry.getKey());
-        addresses.add(entry.getKey());
-        exceptions.add(e);
-        LOG.warn(e);
-      } finally {
-        int index = 0;
-        for (Object r : rs) {
-          Row g = rows.get(index++);
-          rmap.put(g, r);
+    final AtomicBoolean hasError = new AtomicBoolean(false);
+    Map<String, Future<Map<Row, Object>>> futures = 
+        new HashMap<String, Future<Map<Row, Object>>>();
+    for (final Entry<String, List<Row>> entry : tableMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Map<Row, Object>>() {
+
+        @Override
+        public Map<Row, Object> call() throws Exception {
+          Map<Row, Object> map = new HashMap<Row, Object>();
+          List<Row> rows = entry.getValue();
+          Object[] rs = new Object[rows.size()];
+          try {
+            HTableInterface table = getClusterHTable(entry.getKey());
+            table.batch(rows, rs);
+          } catch (IOException e) {
+            // need clear the cached HTable if the connection is refused
+            clearCachedTable(entry.getKey());
+            hasError.set(true);
+            LOG.error(e);
+          } finally {
+            int index = 0;
+            for (Object r : rs) {
+              Row g = rows.get(index++);
+              map.put(g, r);
+            }
+          }
+          return map;
         }
-      }
+      }));
     }
 
-    List<Row> acts = new ArrayList<Row>();
+    try {
+      for (Entry<String, Future<Map<Row, Object>>> result : futures.entrySet()) {
+        rmap.putAll(result.getValue().get());
+      }
+    } catch (Exception e) {
+      // do nothing
+    }
+
     int index = 0;
     for (Row row : actions) {
-      Object result = rmap.get(row);
-      if (result == null || result instanceof Throwable) {
-        acts.add(row);
-      }
-      results[index++] = result;
+      results[index++] = rmap.get(row);
     }
-    if (!exceptions.isEmpty()) {
-      throw new RetriesExhaustedWithDetailsException(exceptions, acts, addresses);
+    if (hasError.get()) {
+      throw new IOException();
     }
   }
 
