@@ -454,49 +454,69 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       gs.add(get);
     }
 
-    for (Entry<String, List<Get>> entry : tableMap.entrySet()) {
-      try {
-        HTableInterface table = getClusterHTable(entry.getKey());
-        List<Get> gs = entry.getValue();
-        Result[] rs = table.get(gs);
-        int index = 0;
-        for (Result r : rs) {
-          Get g = gs.get(index++);
-          results.put(g, r);
-        }
-      } catch (IOException e) {
-        // need clear the cached HTable if the connection is refused
-        clearCachedTable(entry.getKey());
-        LOG.warn("Fail to connect to the cluster " + entry.getKey(), e);
-        // Not do the failover for all IOException, only for the exceptions related with the connect
-        // issue.
-        if (failover && CrossSiteUtil.isFailoverException(e)) {
-          LOG.warn("Failover: redirect the get request to the peers. Please notice, the data may be stale.");
-          HTableInterface table = findAvailablePeer(cachedZKInfo.clusterInfos, entry.getKey());
-          if (table == null) {
-            LOG.error("Fail to find any peers", e);
-            throw e;
-          } else {
-            try {
-              List<Get> gs = entry.getValue();
-              Result[] rs = table.get(gs);
-              int index = 0;
-              for (Result r : rs) {
-                Get g = gs.get(index++);
-                results.put(g, r);
+    Map<String, Future<Map<Get, Result>>> futures = 
+        new HashMap<String, Future<Map<Get, Result>>>();
+    final Map<String, ClusterInfo> clusterInfos = cachedZKInfo.clusterInfos;
+    for (final Entry<String, List<Get>> entry : tableMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Map<Get, Result>>() {
+
+        @Override
+        public Map<Get, Result> call() throws Exception {
+          Map<Get, Result> map = new TreeMap<Get, Result>(new GetComparator());
+          try {
+            HTableInterface table = getClusterHTable(entry.getKey());
+            List<Get> gs = entry.getValue();
+            Result[] rs = table.get(gs);
+            int index = 0;
+            for (Result r : rs) {
+              Get g = gs.get(index++);
+              map.put(g, r);
+            }
+          } catch (IOException e) {
+            // need clear the cached HTable if the connection is refused
+            clearCachedTable(entry.getKey());
+            LOG.warn("Fail to connect to the cluster " + entry.getKey(), e);
+            // Not do the failover for all IOException, 
+            // only for the exceptions related with the connect issue.
+            if (failover && CrossSiteUtil.isFailoverException(e)) {
+              LOG.warn("Failover: redirect the get request to the peers. Please notice, the data may be stale.");
+              HTableInterface table = findAvailablePeer(clusterInfos, entry.getKey());
+              if (table == null) {
+                LOG.error("Fail to find any peers", e);
+                throw e;
+              } else {
+                try {
+                  List<Get> gs = entry.getValue();
+                  Result[] rs = table.get(gs);
+                  int index = 0;
+                  for (Result r : rs) {
+                    Get g = gs.get(index++);
+                    map.put(g, r);
+                  }
+                } finally {
+                  try {
+                    table.close();
+                  } catch (IOException e1) {
+                    LOG.warn("Fail to close the peer HTable", e1);
+                  }
+                }
               }
-            } finally {
-              try {
-                table.close();
-              } catch (IOException e1) {
-                LOG.warn("Fail to close the peer HTable", e1);
-              }
+            } else {
+              throw e;
             }
           }
-        } else {
-          throw e;
+          return map;
         }
+
+      }));
+    }
+
+    try {
+      for (Entry<String, Future<Map<Get, Result>>> result : futures.entrySet()) {
+        results.putAll(result.getValue().get());
       }
+    } catch (Exception e) {
+      throw new IOException(e);
     }
     Result[] rs = new Result[gets.size()];
     int index = 0;
