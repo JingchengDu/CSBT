@@ -672,7 +672,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     boolean hasError = false;
     for (Entry<String, Future<Void>> result : futures.entrySet()) {
       try { 
-        result.getValue().get(); 
+        result.getValue().get();
       } catch (Exception e) {
         hasError = true;
         LOG.error(e);
@@ -732,14 +732,35 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       }
       ds.add(delete);
     }
-    for (Entry<String, List<Delete>> entry : tableMap.entrySet()) {
-      try {
-        getClusterHTable(entry.getKey()).delete(entry.getValue());
-      } catch (IOException e) {
-        // need clear the cached HTable if the connection is refused
-        clearCachedTable(entry.getKey());
-        throw e;
+    Map<String, Future<Void>> futures = 
+        new HashMap<String, Future<Void>>();
+    for (final Entry<String, List<Delete>> entry : tableMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Void>() {
+
+        @Override
+        public Void call() throws Exception {
+          try {
+            getClusterHTable(entry.getKey()).delete(entry.getValue());
+          } catch (IOException e) {
+            // need clear the cached HTable if the connection is refused
+            clearCachedTable(entry.getKey());
+            throw e;
+          }
+          return null;
+        }
+      }));
+    }
+    boolean hasError = false;
+    for (Entry<String, Future<Void>> result : futures.entrySet()) {
+      try { 
+        result.getValue().get();
+      } catch (Exception e) {
+        hasError = true;
+        LOG.error(e);
       }
+    }
+    if (hasError) {
+      throw new IOException();
     }
   }
 
