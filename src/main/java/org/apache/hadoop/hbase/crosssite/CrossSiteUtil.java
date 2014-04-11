@@ -31,8 +31,6 @@ import java.util.TreeSet;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
-import org.apache.hadoop.hbase.client.NoServerForRegionException;
-import org.apache.hadoop.hbase.client.RetriesExhaustedException;
 import org.apache.hadoop.hbase.crosssite.locator.ClusterLocator;
 import org.apache.hadoop.hbase.filter.ParseConstants;
 import org.apache.hadoop.hbase.util.Bytes;
