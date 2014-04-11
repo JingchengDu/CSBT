@@ -41,6 +41,7 @@ import org.apache.hadoop.hbase.crosssite.CrossSiteUtil;
 import org.apache.hadoop.hbase.crosssite.CrossSiteZNodes;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.MergeSortIterator;
+import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 
 /**
@@ -55,7 +56,7 @@ class CrossSiteClientScanner implements ResultScanner {
   private final String tableName;
   private final ExecutorService pool;
   private boolean ignoreUnavailableClusters;
-  private List<ClusterInfo> clusters;
+  private List<Pair<ClusterInfo, Pair<byte[], byte[]>>> clusterStartStopKeyPairs;
   private List<ScannerIterator> clusterScannerIterators;
   private Iterator<Result> resultIterator;
   private boolean closed = false;
@@ -64,8 +65,10 @@ class CrossSiteClientScanner implements ResultScanner {
   private final HTableInterfaceFactory hTableFactory;
 
   protected CrossSiteClientScanner(final Configuration conf, final Scan scan,
-      final byte[] tableName, List<ClusterInfo> clusters, boolean failover, ExecutorService pool,
-      CrossSiteZNodes znodes, HTableInterfaceFactory hTableFactory) throws IOException {
+      final byte[] tableName,
+      List<Pair<ClusterInfo, Pair<byte[], byte[]>>> clusterStartStopKeyPairs, boolean failover,
+      ExecutorService pool, CrossSiteZNodes znodes, HTableInterfaceFactory hTableFactory)
+      throws IOException {
     this.configuration = conf;
     this.scan = scan;
     this.tableName = Bytes.toString(tableName);
@@ -73,7 +76,7 @@ class CrossSiteClientScanner implements ResultScanner {
     this.ignoreUnavailableClusters = configuration.getBoolean(
         CrossSiteConstants.CROSS_SITE_TABLE_SCAN_IGNORE_UNAVAILABLE_CLUSTERS, false);
     this.failover = failover;
-    this.clusters = clusters;
+    this.clusterStartStopKeyPairs = clusterStartStopKeyPairs;
     this.znodes = znodes;
     clusterScannerIterators = new ArrayList<ScannerIterator>();
     this.hTableFactory = hTableFactory;
@@ -81,11 +84,11 @@ class CrossSiteClientScanner implements ResultScanner {
   }
 
   private void initialize() throws IOException {
-    int count = this.clusters.size();
+    int count = this.clusterStartStopKeyPairs.size();
     List<Future<ScannerIterator>> futures = new ArrayList<Future<ScannerIterator>>();
     for (int i = count - 1; i >= 0; i--) {
-      Callable<ScannerIterator> callable = createCallable(clusters.get(i), this.tableName,
-          ignoreUnavailableClusters);
+      Callable<ScannerIterator> callable = createCallable(clusterStartStopKeyPairs.get(i),
+          this.tableName, ignoreUnavailableClusters);
       if (callable != null) {
         futures.add(pool.submit(callable));
       }
@@ -118,20 +121,24 @@ class CrossSiteClientScanner implements ResultScanner {
         new ResultComparator());
   }
 
-  private Callable<ScannerIterator> createCallable(final ClusterInfo cluster,
+  private Callable<ScannerIterator> createCallable(
+      final Pair<ClusterInfo, Pair<byte[], byte[]>> clusterStartStopKeyPair,
       final String tableName, final boolean ignore) {
     return new Callable<ScannerIterator>() {
       @Override
       public ScannerIterator call() throws Exception {
         if (LOG.isDebugEnabled()) {
-          LOG.debug("Start initialization of scanner" + " for the cluster " + cluster);
+          LOG.debug("Start initialization of scanner" + " for the cluster "
+              + clusterStartStopKeyPair.getFirst());
         }
-        String clusterTableName = CrossSiteUtil.getClusterTableName(tableName, cluster.getName());
+        String clusterTableName = CrossSiteUtil.getClusterTableName(tableName,
+            clusterStartStopKeyPair.getFirst().getName());
         HTableInterface table = null;
         try {
           try {
             table = hTableFactory.createHTableInterface(
-                getClusterConf(configuration, cluster.getAddress()), Bytes.toBytes(clusterTableName)); 
+                getClusterConf(configuration, clusterStartStopKeyPair.getFirst().getAddress()),
+                Bytes.toBytes(clusterTableName));
           } catch (RuntimeException e) {
             if (e.getCause() instanceof IOException) {
               throw (IOException) e.getCause();
@@ -140,22 +147,24 @@ class CrossSiteClientScanner implements ResultScanner {
             }
           }
         } catch (IOException e) {
-          LOG.info("Fail to connect to the CSBTable " + tableName + " in cluster " + cluster, e);
+          LOG.info("Fail to connect to the CSBTable " + tableName + " in cluster "
+              + clusterStartStopKeyPair.getFirst(), e);
           if (failover && CrossSiteUtil.isFailoverException(e)) {
-            LOG.warn("Start to failover to the peers for cluster " + cluster
-                + ". Please notice, the data may be stale.");
-            // Get the peers once from the zk.. this would be helpful when a new peer is added after
-            // a CrossSiteHTable instance has been created
-            List<ClusterInfo> peerClusters = znodes.getPeerClusters(cluster.getName());
+            LOG.warn("Start to failover to the peers for cluster "
+                + clusterStartStopKeyPair.getFirst() + ". Please notice, the data may be stale.");
+            // Get the peers once from the zk.. this would be helpful when a new peer is added 
+            // after a CrossSiteHTable instance has been created
+            List<ClusterInfo> peerClusters = znodes.getPeerClusters(clusterStartStopKeyPair
+                .getFirst().getName());
             for (ClusterInfo peerCluster : peerClusters) {
               if (LOG.isDebugEnabled()) {
                 LOG.debug("Start failover to the peer cluster" + peerCluster + " for the cluster "
-                    + cluster);
+                    + clusterStartStopKeyPair.getFirst());
               }
               Configuration conf = getClusterConf(configuration, peerCluster.getAddress());
               try {
                 String peerClusterTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
-                    cluster.getName(), peerCluster.getName());
+                    clusterStartStopKeyPair.getFirst().getName(), peerCluster.getName());
                 try {
                   table = hTableFactory.createHTableInterface(conf,
                       Bytes.toBytes(peerClusterTableName));
@@ -177,11 +186,12 @@ class CrossSiteClientScanner implements ResultScanner {
             }
           } else {
             if (ignore) {
-              LOG.warn("The scanner for the cluster " + cluster + " will be ignored");
+              LOG.warn("The scanner for the cluster " + clusterStartStopKeyPair.getFirst()
+                  + " will be ignored");
               return null;
             } else {
               throw new IOException("Failed to initialize CSBTable '" + tableName + "' in cluster "
-                  + cluster);
+                  + clusterStartStopKeyPair.getFirst());
             }
           }
         }
@@ -191,11 +201,15 @@ class CrossSiteClientScanner implements ResultScanner {
             throw new IOException("Failed to initialize CSBTable '" + tableName
                 + "' in main and peer clusters");
           } else {
-            LOG.warn("The scanner for the cluster " + cluster.getName() + " will be ignored");
+            LOG.warn("The scanner for the cluster " + clusterStartStopKeyPair.getFirst().getName()
+                + " will be ignored");
             return null;
           }
         }
-        return new ScannerIterator(table, new Scan(scan));
+        Scan s = new Scan(scan);
+        s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
+        s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
+        return new ScannerIterator(table, s);
       }
     };
   }

@@ -553,8 +553,9 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     if (scan.getCaching() <= 0) {
       scan.setCaching(getScannerCaching());
     }
-    return new CrossSiteClientScanner(configuration, scan, tableName, getClusterInfos(
-        scan.getStartRow(), scan.getStopRow(), clusterNames), failover, pool, znodes, hTableFactory);
+    return new CrossSiteClientScanner(configuration, scan, tableName,
+        getClusterInfoStartStopKeyPairs(scan.getStartRow(), scan.getStopRow(), clusterNames),
+        failover, pool, znodes, hTableFactory);
   }
 
   /**
@@ -933,15 +934,18 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   public <T extends CoprocessorProtocol, R> void coprocessorExec(final Class<T> protocol,
       final byte[] startKey, final byte[] endKey, final String[] clusterNames,
       final Call<T, R> callable, final Callback<R> callback) throws IOException, Throwable {
-    List<ClusterInfo> cis = getClusterInfos(startKey, endKey, clusterNames);
+    List<Pair<ClusterInfo, Pair<byte[], byte[]>>> cis = getClusterInfoStartStopKeyPairs(startKey,
+        endKey, clusterNames);
     Map<String, Future<Void>> futures = new HashMap<String, Future<Void>>();
-    for (final ClusterInfo ci : cis) {
-      futures.put(ci.getName(), pool.submit(new Callable<Void>() {
+    for (final Pair<ClusterInfo, Pair<byte[], byte[]>> pair : cis) {
+      futures.put(pair.getFirst().getName(), pool.submit(new Callable<Void>() {
         @Override
         public Void call() throws Exception {
           try {
-            HTableInterface table = getClusterHTable(ci.getName(), ci.getAddress());
-            table.coprocessorExec(protocol, startKey, endKey, callable, callback);
+            HTableInterface table = getClusterHTable(pair.getFirst().getName(), pair.getFirst()
+                .getAddress());
+            table.coprocessorExec(protocol, pair.getSecond().getFirst(), pair.getSecond()
+                .getSecond(), callable, callback);
           } catch (Throwable e) {
             throw new Exception(e);
           }
@@ -1120,7 +1124,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    */
   @Override
   public NavigableMap<HRegionInfo, ServerName> getRegionLocations() throws IOException {
-    List<ClusterInfo> cis = getClusterInfos(null, null, null);
+    List<ClusterInfo> cis = getClusterInfos(null, null);
     List<Future<NavigableMap<HRegionInfo, ServerName>>> futures = 
         new ArrayList<Future<NavigableMap<HRegionInfo, ServerName>>>();
     for (final ClusterInfo ci : cis) {
@@ -1185,7 +1189,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   @Override
   public List<HRegionLocation> getRegionsInRange(final byte[] startKey, final byte[] endKey,
       final boolean reload) throws IOException {
-    List<ClusterInfo> cis = getClusterInfos(startKey, endKey, null);
+    List<ClusterInfo> cis = getClusterInfos(startKey, endKey);
     List<Future<List<HRegionLocation>>> futures = new ArrayList<Future<List<HRegionLocation>>>();
     for (final ClusterInfo ci : cis) {
       futures.add(pool.submit(new Callable<List<HRegionLocation>>() {
@@ -1421,22 +1425,15 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * 
    * @param start
    * @param stop
-   * @param clusters
-   * @return the list of the <code>ClusterInfo</code>, returns an empty one if there're not clusters
-   *         between the start/stop rows.
+   * @return the list of the <code>ClusterInfo</code>, returns an empty one if there're not 
+   *         clusters between the start/stop rows.
    * @throws IOException
    */
-  private List<ClusterInfo> getClusterInfos(byte[] start, byte[] stop, String[] clusters)
+  private List<ClusterInfo> getClusterInfos(byte[] start, byte[] stop)
       throws IOException {
     CachedZookeeperInfo cachedZKInfo = this.cachedZKInfo;
     // find the clusters.
-    Set<String> clusterNames = null;
-    if (clusters == null || clusters.length == 0) {
-      clusterNames = cachedZKInfo.clusterNames;
-    } else {
-      // Hierarchy should be got in any case
-      clusterNames = getPhysicalClusters(cachedZKInfo, clusters);
-    }
+    Set<String> clusterNames = cachedZKInfo.clusterNames;
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
     // TODO when the Locator is CompositeSubstringClusterLocator or SubstringClusterLocator and
     // index is 0, we can extract the cluster names?
@@ -1444,8 +1441,8 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       // if the locator is a prefix locator, do the optimization.
       // find the start row and stop row in the scan, and find the cluster
       // names.
-      clusterNames = filterClustersForPrefixClusterLocator(clusterLocator, clusterNames, start,
-          stop);
+      clusterNames = filterClustersForPrefixClusterLocator((PrefixClusterLocator) clusterLocator,
+          clusterNames, start, stop, false);
     }
 
     // clusters indicated in the parameter.
@@ -1457,6 +1454,91 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       }
     }
     return results;
+  }
+
+  /**
+   * Gets the list of the pair of the <code>ClusterInfo</code> and start/stop keys.
+   * <ul>
+   * <li>If the clusters are specified, the start/stop key for the clusterA would be changed to
+   * ClusterA + delimiter + start/stop key.</li>
+   * <li>If the clusters are not specified, the start/stop key won't be changed.</li>
+   * </ul>
+   * 
+   * @param start
+   * @param stop
+   * @param clusters
+   * @return
+   * @throws IOException
+   */
+  private List<Pair<ClusterInfo, Pair<byte[], byte[]>>> getClusterInfoStartStopKeyPairs(
+      byte[] start, byte[] stop, String[] clusters) throws IOException {
+    CachedZookeeperInfo cachedZKInfo = this.cachedZKInfo;
+    // find the clusters.
+    Set<String> clusterNames = null;
+    boolean shouldAppendClusterName = false;
+    if (clusters == null || clusters.length == 0) {
+      clusterNames = cachedZKInfo.clusterNames;
+    } else {
+      // Hierarchy should be got in any case
+      clusterNames = getPhysicalClusters(cachedZKInfo, clusters);
+      shouldAppendClusterName = true;
+    }
+    ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
+    String delimiter = null;
+    // TODO when the Locator is CompositeSubstringClusterLocator or SubstringClusterLocator and
+    // index is 0, we can extract the cluster names?
+    if (clusterLocator instanceof PrefixClusterLocator) {
+      // if the locator is a prefix locator, do the optimization.
+      // find the start row and stop row in the scan, and find the cluster
+      // names.
+      PrefixClusterLocator prefixClusterLocator = (PrefixClusterLocator) clusterLocator;
+      delimiter = prefixClusterLocator.getDelimiter();
+      if (shouldAppendClusterName) {
+        clusterNames = filterClustersForPrefixClusterLocator(prefixClusterLocator, clusterNames,
+            start, stop, true);
+      } else {
+        clusterNames = filterClustersForPrefixClusterLocator(prefixClusterLocator, clusterNames,
+            start, stop, false);
+      }
+    } else {
+      shouldAppendClusterName = false;
+    }
+
+    // clusters indicated in the parameter.
+    List<Pair<ClusterInfo, Pair<byte[], byte[]>>> results = 
+        new ArrayList<Pair<ClusterInfo, Pair<byte[], byte[]>>>();
+    for (String clusterName : clusterNames) {
+      ClusterInfo ci = cachedZKInfo.clusterInfos.get(clusterName);
+      if (ci != null) {
+        Pair<byte[], byte[]> keyPair = new Pair<byte[], byte[]>(getStartKey(
+            shouldAppendClusterName, clusterName, delimiter, start), getStopKey(
+            shouldAppendClusterName, clusterName, delimiter, stop));
+        results.add(new Pair<ClusterInfo, Pair<byte[], byte[]>>(ci, keyPair));
+      }
+    }
+    return results;
+  }
+
+  private byte[] getStartKey(boolean shouldAppendClusterName, String clusterName, String delimiter,
+      byte[] startKey) {
+    if (shouldAppendClusterName && startKey != null
+        && !Bytes.equals(startKey, HConstants.EMPTY_START_ROW)) {
+      String sk = Bytes.toString(startKey);
+      return Bytes.toBytes(clusterName + delimiter + sk);
+    } else {
+      return startKey;
+    }
+  }
+
+  private byte[] getStopKey(boolean shouldAppendClusterName, String clusterName, String delimiter,
+      byte[] stopKey) {
+    if (shouldAppendClusterName && stopKey != null
+        && !Bytes.equals(stopKey, HConstants.EMPTY_END_ROW)) {
+      String sk = Bytes.toString(stopKey);
+      return Bytes.toBytes(clusterName + delimiter + sk);
+    } else {
+      return stopKey;
+    }
   }
 
   /**
@@ -1502,23 +1584,26 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   /**
    * Gets all the clusters by the start/stop rows when the cluster locator is PrefixClusterLocator.
    * 
-   * @param clusterLocator
+   * @param prefixClusterLocator
    * @param clusters
    * @param start
    * @param stop
+   * @param skipFilter
    * @return
    */
-  private Set<String> filterClustersForPrefixClusterLocator(ClusterLocator clusterLocator,
-      Set<String> clusters, byte[] start,
-      byte[] stop) {
+  private Set<String> filterClustersForPrefixClusterLocator(
+      PrefixClusterLocator prefixClusterLocator, Set<String> clusters, byte[] start, byte[] stop,
+      boolean skipFilter) {
+    if (skipFilter) {
+      return clusters;
+    }
     String startCluster = null;
     String stopCluster = null;
-    PrefixClusterLocator prefixClusterLocator = (PrefixClusterLocator) clusterLocator;
     try {
       if (start != null && !Bytes.equals(start, HConstants.EMPTY_START_ROW)) {
         startCluster = Bytes.toString(start);
         if (startCluster.indexOf(prefixClusterLocator.getDelimiter()) >= 0) {
-          startCluster = clusterLocator.getClusterName(start);
+          startCluster = prefixClusterLocator.getClusterName(start);
         }
       }
     } catch (RowNotLocatableException e) {
@@ -1528,7 +1613,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       if (stop != null && !Bytes.equals(stop, HConstants.EMPTY_END_ROW)) {
         stopCluster = Bytes.toString(stop);
         if (stopCluster.indexOf(prefixClusterLocator.getDelimiter()) >= 0) {
-          stopCluster = clusterLocator.getClusterName(stop);
+          stopCluster = prefixClusterLocator.getClusterName(stop);
         }
       }
     } catch (RowNotLocatableException e) {
