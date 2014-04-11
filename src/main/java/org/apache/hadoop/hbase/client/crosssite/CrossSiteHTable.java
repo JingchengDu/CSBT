@@ -651,14 +651,35 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       }
       ps.add(put);
     }
-    for (Entry<String, List<Put>> entry : tableMap.entrySet()) {
-      try {
-        getClusterHTable(entry.getKey()).put(entry.getValue());
-      } catch (IOException e) {
-        // need clear the cached HTable if the connection is refused
-        clearCachedTable(entry.getKey());
-        throw e;
+    Map<String, Future<Void>> futures = 
+        new HashMap<String, Future<Void>>();
+    for (final Entry<String, List<Put>> entry : tableMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Void>() {
+
+        @Override
+        public Void call() throws Exception {
+          try {
+            getClusterHTable(entry.getKey()).put(entry.getValue());
+          } catch (IOException e) {
+            // need clear the cached HTable if the connection is refused
+            clearCachedTable(entry.getKey());
+            throw e;
+          }
+          return null;
+        }
+      }));
+    }
+    boolean hasError = false;
+    for (Entry<String, Future<Void>> result : futures.entrySet()) {
+      try { 
+        result.getValue().get(); 
+      } catch (Exception e) {
+        hasError = true;
+        LOG.error(e);
       }
+    }
+    if (hasError) {
+      throw new IOException();
     }
   }
 
