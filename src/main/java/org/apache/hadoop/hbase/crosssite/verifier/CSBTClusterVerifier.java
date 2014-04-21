@@ -37,7 +37,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
-import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.CrossSiteCallable;
@@ -312,6 +311,22 @@ public class CSBTClusterVerifier extends Configured implements Tool {
             }
             setReturnCode(RETURN_CODE.ERROR_FIXED.ordinal());
             LOG.info("The states of the tables have been corrected");
+          } else {
+            for (Entry<String, Map<String, TableState>> workingEntry : workingMap.entrySet()) {
+              // TODO : Create an error report as in HBCK
+              String message = "The cluster " + workingEntry.getKey();
+              StringBuilder tables = new StringBuilder();
+              if (workingEntry.getValue() != null) {
+                for (String tableName : workingEntry.getValue().keySet()) {
+                  tables.append(tableName).append(" ");
+                }
+              }
+              message += " has the following tables " + tables.toString()
+                  + " with inconsistent state";
+              System.out.println(message);
+              System.out.println();
+            }
+            setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
           }
         } else {
           LOG.info("All the tables are in the correct state");
@@ -458,8 +473,9 @@ public class CSBTClusterVerifier extends Configured implements Tool {
     try {
       for (Future<Map<String, List<String>>> result : results) {
         Map<String, List<String>> issues = result.get();
-        LOG.debug("Mismatch in the tables actually created in the clusters with the list of tables in the crosssite table znode");
-        if (issues != null) {
+        LOG.debug("Mismatch in the tables actually created in the clusters with the list of tables in the crosssite table znode:"
+            + issues);
+        if (issues != null && !issues.isEmpty()) {
           Set<Entry<String, List<String>>> clusterWithIssues = issues.entrySet();
           if (!shouldFixTables()) {
             for (Entry<String, List<String>> entry : clusterWithIssues) {
@@ -468,8 +484,8 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               message += " has the following missing tables " + entry.getValue();
               System.out.println(message);
               System.out.println();
-              setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
             }
+            setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
           } else {
             // TODO : Not doing using callable
             LOG.debug("Creating tables in the clusters which does not have the table as given in the table znode");
