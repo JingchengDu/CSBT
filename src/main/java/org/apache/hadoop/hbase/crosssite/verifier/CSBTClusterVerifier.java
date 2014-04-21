@@ -201,13 +201,15 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                         entry.getKey());
                     if (state == TableState.ENABLED) {
                       peerShouldEnabled = true;
-                      if (!admin.isTableEnabled(clusterTableName)) {
+                      if (admin.tableExists(clusterTableName)
+                          && !admin.isTableEnabled(clusterTableName)) {
                         states.put(clusterTableName, TableState.ENABLED);
                         LOG.error("The state of the table " + clusterTableName + " in the cluster "
                             + entry.getKey() + " is disabled, should be corrected to the enabled");
                       }
                     } else if (state == TableState.DISABLED) {
-                      if (!admin.isTableDisabled(clusterTableName)) {
+                      if (admin.tableExists(clusterTableName)
+                          && !admin.isTableDisabled(clusterTableName)) {
                         states.put(clusterTableName, TableState.DISABLED);
                         LOG.error("The state of the table " + clusterTableName + " in the cluster "
                             + entry.getKey() + " is enabled, should be corrected to the disabled");
