@@ -345,13 +345,13 @@ public class CSBTClusterVerifier extends Configured implements Tool {
             for (HTableDescriptor tableDesc : listTables) {
               String crossSiteTableName = null;
               try {
-                crossSiteTableName = CrossSiteUtil.getCrossSiteTableName(tableDesc
-                    .getNameAsString());
+                crossSiteTableName = CrossSiteUtil.getCrossSiteTableName(Bytes.toString(tableDesc
+                    .getName()));
               } catch (IllegalArgumentException e) {
                 // Ignore - as there could be other tables also
                 continue;
               }
-              if (crossSiteTableName.equals(tableDescFromZNode.getNameAsString())) {
+              if (crossSiteTableName.equals(Bytes.toString(tableDescFromZNode.getName()))) {
                 found = true;
                 tempHTD = tableDesc;
                 break;
@@ -361,8 +361,8 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               // Create a new descriptor and update the name without the
               // crosssite naming structure
               HTableDescriptor clonedHTDWithDiffName = new HTableDescriptor(tempHTD);
-              clonedHTDWithDiffName.setName(Bytes.toBytes(CrossSiteUtil.getCrossSiteTableName(tempHTD
-                  .getNameAsString())));
+              clonedHTDWithDiffName.setName(Bytes.toBytes(CrossSiteUtil.getCrossSiteTableName(Bytes
+                  .toString(tempHTD.getName()))));
               // ignore the scope for the columns
               for (HColumnDescriptor hcdInZNode : tableDescFromZNode.getColumnFamilies()) {
                 if (hcdInZNode.getScope() > 0) {
@@ -399,7 +399,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
             for (HTableDescriptor htd : htds) {
               // Should we be more specific by going to every table in the
               // main cluster and the peer and then checking it
-              String tableName = htd.getNameAsString();
+              String tableName = Bytes.toString(htd.getName());
               if (crossSiteHBaseAdmin.isTableEnabled(tableName)) {
                 LOG.debug("Disabling the table " + tableName);
                 crossSiteHBaseAdmin.disableTable(tableName);
@@ -453,7 +453,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               }
             }
             if (!found) {
-              notFoundTableDesc.add(tableDescFromZNode.getNameAsString());
+              notFoundTableDesc.add(Bytes.toString(tableDescFromZNode.getName()));
             }
           }
           if (notFoundTableDesc.size() != 0) {
