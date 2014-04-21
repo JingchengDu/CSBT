@@ -314,19 +314,19 @@ public class CSBTClusterVerifier extends Configured implements Tool {
           } else {
             for (Entry<String, Map<String, TableState>> workingEntry : workingMap.entrySet()) {
               // TODO : Create an error report as in HBCK
-              String message = "The cluster " + workingEntry.getKey();
-              StringBuilder tables = new StringBuilder();
-              if (workingEntry.getValue() != null) {
+              if (workingEntry.getValue() != null && !workingEntry.getValue().isEmpty()) {
+                String message = "The cluster " + workingEntry.getKey();
+                StringBuilder tables = new StringBuilder();
                 for (String tableName : workingEntry.getValue().keySet()) {
                   tables.append(tableName).append(" ");
                 }
+                message += " has the following tables " + tables.toString()
+                    + " with inconsistent state";
+                System.out.println(message);
+                System.out.println();
+                setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
               }
-              message += " has the following tables " + tables.toString()
-                  + " with inconsistent state";
-              System.out.println(message);
-              System.out.println();
             }
-            setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
           }
         } else {
           LOG.info("All the tables are in the correct state");
@@ -475,7 +475,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
         Map<String, List<String>> issues = result.get();
         LOG.debug("Mismatch in the tables actually created in the clusters with the list of tables in the crosssite table znode:"
             + issues);
-        if (issues != null && !issues.isEmpty()) {
+        if (issues != null) {
           Set<Entry<String, List<String>>> clusterWithIssues = issues.entrySet();
           if (!shouldFixTables()) {
             for (Entry<String, List<String>> entry : clusterWithIssues) {
