@@ -37,6 +37,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.CrossSiteCallable;
@@ -360,6 +361,13 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               HTableDescriptor clonedHTDWithDiffName = new HTableDescriptor(tempHTD);
               clonedHTDWithDiffName.setName(Bytes.toBytes(CrossSiteUtil.getCrossSiteTableName(tempHTD
                   .getNameAsString())));
+              // ignore the scope for the columns
+              for (HColumnDescriptor hcdInZNode : tableDescFromZNode.getColumnFamilies()) {
+                if (hcdInZNode.getScope() > 0) {
+                  HColumnDescriptor hcd = clonedHTDWithDiffName.getFamily(hcdInZNode.getName());
+                  hcd.setScope(hcdInZNode.getScope());
+                }
+              }
               if (!tableDescFromZNode.equals(clonedHTDWithDiffName)) {
                 result.add(tableDescFromZNode);
               }
