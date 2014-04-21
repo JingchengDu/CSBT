@@ -336,22 +336,17 @@ public class CSBTClusterVerifier extends Configured implements Tool {
       results.add(executor.submit(new CrossSiteCallable<List<HTableDescriptor>>(getConf()) {
         @Override
         public List<HTableDescriptor> call() throws Exception {
+          String clusterName = entry.getKey();
           HBaseAdmin admin = createHBaseAdmin(configuration, entry.getValue().getAddress());
           HTableDescriptor[] listTables = admin.listTables();
           List<HTableDescriptor> result = new ArrayList<HTableDescriptor>();
           for (HTableDescriptor tableDescFromZNode : tableDescsFromZnode) {
+            String clusterTableName = CrossSiteUtil.getClusterTableName(
+                Bytes.toString(tableDescFromZNode.getName()), clusterName);
             boolean found = false;
             HTableDescriptor tempHTD = null;
             for (HTableDescriptor tableDesc : listTables) {
-              String crossSiteTableName = null;
-              try {
-                crossSiteTableName = CrossSiteUtil.getCrossSiteTableName(Bytes.toString(tableDesc
-                    .getName()));
-              } catch (IllegalArgumentException e) {
-                // Ignore - as there could be other tables also
-                continue;
-              }
-              if (crossSiteTableName.equals(Bytes.toString(tableDescFromZNode.getName()))) {
+              if (clusterTableName.equals(Bytes.toString(tableDesc.getName()))) {
                 found = true;
                 tempHTD = tableDesc;
                 break;
@@ -363,13 +358,6 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               HTableDescriptor clonedHTDWithDiffName = new HTableDescriptor(tempHTD);
               clonedHTDWithDiffName.setName(Bytes.toBytes(CrossSiteUtil.getCrossSiteTableName(Bytes
                   .toString(tempHTD.getName()))));
-              // ignore the scope for the columns
-              for (HColumnDescriptor hcdInZNode : tableDescFromZNode.getColumnFamilies()) {
-                if (hcdInZNode.getScope() > 0) {
-                  HColumnDescriptor hcd = clonedHTDWithDiffName.getFamily(hcdInZNode.getName());
-                  hcd.setScope(hcdInZNode.getScope());
-                }
-              }
               if (!tableDescFromZNode.equals(clonedHTDWithDiffName)) {
                 result.add(tableDescFromZNode);
               }
