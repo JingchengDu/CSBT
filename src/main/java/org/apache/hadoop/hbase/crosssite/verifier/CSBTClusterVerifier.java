@@ -434,26 +434,20 @@ public class CSBTClusterVerifier extends Configured implements Tool {
     final HTableDescriptor[] tableDescsFromZnode = crossSiteZnodes.listTableDescs();
     List<Future<Map<String, List<String>>>> results = new ArrayList<Future<Map<String, List<String>>>>();
     for (final Entry<String, ClusterInfo> entry : clusterInfos.entrySet()) {
-      final String clusterName = entry.getKey();
       results.add(executor.submit(new CrossSiteCallable<Map<String, List<String>>>(getConf()) {
 
         @Override
         public Map<String, List<String>> call() throws Exception {
+          String clusterName = entry.getKey();
           HBaseAdmin admin = createHBaseAdmin(configuration, entry.getValue().getAddress());
           HTableDescriptor[] listTables = admin.listTables();
           List<String> notFoundTableDesc = new ArrayList<String>();
           for (HTableDescriptor tableDescFromZNode : tableDescsFromZnode) {
             boolean found = false;
+            String clusterTableName = CrossSiteUtil.getClusterTableName(
+                Bytes.toString(tableDescFromZNode.getName()), clusterName);
             for (HTableDescriptor tableDesc : listTables) {
-              String crossSiteTableName = null;
-              try {
-                crossSiteTableName = CrossSiteUtil.getCrossSiteTableName(tableDesc
-                    .getNameAsString());
-              } catch (IllegalArgumentException e) {
-                // Ignore - as there could be other tables also
-                continue;
-              }
-              if (crossSiteTableName.equals(tableDescFromZNode.getNameAsString())) {
+              if (Bytes.toString(tableDesc.getName()).equals(clusterTableName)) {
                 found = true;
                 break;
               }
