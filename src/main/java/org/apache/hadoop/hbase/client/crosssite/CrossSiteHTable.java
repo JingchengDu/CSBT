@@ -337,13 +337,13 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
     Map<String, Map<Integer, Row>> clusterMap = new TreeMap<String, Map<Integer,Row>>();
-    Map<Integer, Object> rmap = new HashMap<Integer, Object>();
+    Map<Integer, Object> rmap = new TreeMap<Integer, Object>();
     int index = 0;
     for (Row action : actions) {
       String clusterName = clusterLocator.getClusterName(action.getRow());
       Map<Integer, Row> rows = clusterMap.get(clusterName);
       if (rows == null) {
-        rows = new HashMap<Integer, Row>();
+        rows = new TreeMap<Integer, Row>();
         clusterMap.put(clusterName, rows);
       }
       rows.put(Integer.valueOf(index++), action);
@@ -357,7 +357,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
 
         @Override
         public Map<Integer, Object> call() throws Exception {
-          Map<Integer, Object> map = new HashMap<Integer, Object>();
+          Map<Integer, Object> map = new TreeMap<Integer, Object>();
           Map<Integer, Row> rowMap = entry.getValue();
           Object[] rs = new Object[rowMap.size()];
           List<Integer> indexes = new ArrayList<Integer>(rowMap.size());
