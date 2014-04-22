@@ -389,10 +389,10 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                         }
                       }
                       if (!clonedDescFromZNode.equals(peerHtd)) {
-                        List<HTableDescriptor> issues = results.get(clusterName);
+                        List<HTableDescriptor> issues = results.get(peer.getName());
                         if (issues == null) {
                           issues = new ArrayList<HTableDescriptor>();
-                          results.put(clusterName, issues);
+                          results.put(peer.getName(), issues);
                         }
                         issues.add(clonedDescFromZNode);
                       }
