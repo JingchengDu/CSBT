@@ -37,11 +37,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.CrossSiteCallable;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.crosssite.CrossSiteHBaseAdmin;
 import org.apache.hadoop.hbase.crosssite.ClusterInfo;
 import org.apache.hadoop.hbase.crosssite.CrossSiteDummyAbortable;
 import org.apache.hadoop.hbase.crosssite.CrossSiteUtil;
@@ -74,7 +74,6 @@ public class CSBTClusterVerifier extends Configured implements Tool {
   private boolean fixTables = false;
   private boolean fixTableStates = false;
   private boolean fixHTDs = false;
-  private CrossSiteHBaseAdmin crossSiteHBaseAdmin;
   private CrossSiteZNodes crossSiteZnodes;
 
   public CSBTClusterVerifier(Configuration conf) {
@@ -129,12 +128,10 @@ public class CSBTClusterVerifier extends Configured implements Tool {
   }
 
   void connect() throws IOException, KeeperException {
-    crossSiteHBaseAdmin = new CrossSiteHBaseAdmin(getConf());
     ZooKeeperWatcher zooKeeperWatcher = new ZooKeeperWatcher(getConf(),
         "connection to global zookeeper from CSBTClusterVerifier ", new CrossSiteDummyAbortable(),
         false);
     crossSiteZnodes = new CrossSiteZNodes(zooKeeperWatcher);
-   // connection = crossSiteHBaseAdmin.getConnection();
   }
 
   void onlineVerification(ExecutorService executor) throws IOException, KeeperException {
@@ -249,13 +246,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                                 }
                               }
                             } finally {
-                              if (peerAdmin != null) {
-                                try {
-                                  peerAdmin.close();
-                                } catch (IOException ioe) {
-                                  LOG.debug("Fail to close the HBaseAdmin in peers", ioe);
-                                }
-                              }
+                              closeHBaseAdmin(peerAdmin);
                             }
                           }
                         }
@@ -263,13 +254,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                     }
                   }
                 } finally {
-                  if (admin != null) {
-                    try {
-                      admin.close();
-                    } catch (IOException ioe) {
-                      LOG.debug("Fail to close the HBaseAdmin", ioe);
-                    }
-                  }
+                  closeHBaseAdmin(admin);
                 }
               }
               return clusterTableStates;
@@ -278,7 +263,14 @@ public class CSBTClusterVerifier extends Configured implements Tool {
         }
         for (Future<Map<String, Map<String, TableState>>> result : results) {
           Map<String, Map<String, TableState>> partialResult = result.get();
-          workingMap.putAll(partialResult);
+          for (Entry<String, Map<String, TableState>> partialResultEntry : partialResult.entrySet()) {
+            Map<String, TableState> tableStateMap = workingMap.get(partialResultEntry.getKey());
+            if (tableStateMap == null) {
+              workingMap.put(partialResultEntry.getKey(), partialResultEntry.getValue());
+            } else {
+              tableStateMap.putAll(partialResultEntry.getValue());
+            }
+          }
         }
 
         // This tries to rectiy if the table is not in enabled or disabled state
@@ -300,13 +292,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                   }
                 }
               } finally {
-                if (admin != null) {
-                  try {
-                    admin.close();
-                  } catch (IOException ioe) {
-                    LOG.debug("Fail to close the HBaseAdmin", ioe);
-                  }
-                }
+                closeHBaseAdmin(admin);
               }
             }
             setReturnCode(RETURN_CODE.ERROR_FIXED.ordinal());
@@ -346,15 +332,23 @@ public class CSBTClusterVerifier extends Configured implements Tool {
     LOG.debug("Collecting the list of clusters and the list of tables for verifying HTDs");
     Map<String, ClusterInfo> clusterInfos = crossSiteZnodes.listClusterInfos();
     final HTableDescriptor[] tableDescsFromZnode = crossSiteZnodes.listTableDescs();
-    List<Future<List<HTableDescriptor>>> results = new ArrayList<Future<List<HTableDescriptor>>>();
+    List<Future<Map<String, List<HTableDescriptor>>>> results = 
+        new ArrayList<Future<Map<String, List<HTableDescriptor>>>>();
     for (final Entry<String, ClusterInfo> entry : clusterInfos.entrySet()) {
-      results.add(executor.submit(new CrossSiteCallable<List<HTableDescriptor>>(getConf()) {
+      results.add(executor.submit(new CrossSiteCallable<Map<String, List<HTableDescriptor>>>(getConf()) {
         @Override
-        public List<HTableDescriptor> call() throws Exception {
+        public Map<String, List<HTableDescriptor>> call() throws Exception {
+          Map<String, List<HTableDescriptor>> results = 
+              new HashMap<String, List<HTableDescriptor>>();
           String clusterName = entry.getKey();
+          ClusterInfo clusterInfo = entry.getValue();
           HBaseAdmin admin = createHBaseAdmin(configuration, entry.getValue().getAddress());
-          HTableDescriptor[] listTables = admin.listTables();
-          List<HTableDescriptor> result = new ArrayList<HTableDescriptor>();
+          HTableDescriptor[] listTables = null;
+          try {
+            listTables = admin.listTables();
+          } finally {
+            closeHBaseAdmin(admin);
+          }
           for (HTableDescriptor tableDescFromZNode : tableDescsFromZnode) {
             String clusterTableName = CrossSiteUtil.getClusterTableName(
                 Bytes.toString(tableDescFromZNode.getName()), clusterName);
@@ -368,57 +362,96 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               }
             }
             if (found) {
-              // Create a new descriptor and update the name without the
-              // crosssite naming structure
-              HTableDescriptor clonedHTDWithDiffName = new HTableDescriptor(tempHTD);
-              clonedHTDWithDiffName.setName(Bytes.toBytes(CrossSiteUtil.getCrossSiteTableName(Bytes
-                  .toString(tempHTD.getName()))));
-              if (!tableDescFromZNode.equals(clonedHTDWithDiffName)) {
-                result.add(tableDescFromZNode);
+              HTableDescriptor clonedDescFromZNode = new HTableDescriptor(tableDescFromZNode);
+              clonedDescFromZNode.setName(Bytes.toBytes(clusterTableName));
+              if (!clonedDescFromZNode.equals(tempHTD)) {
+                List<HTableDescriptor> issues = results.get(clusterName);
+                if (issues == null) {
+                  issues = new ArrayList<HTableDescriptor>();
+                  results.put(clusterName, issues);
+                }
+                issues.add(clonedDescFromZNode);
+              }
+            }
+            if (ClusterVerifierUtil.isReplicatedTable(tableDescFromZNode)) {
+              // check the tables in peers
+              if (clusterInfo.getPeers() != null) {
+                for (ClusterInfo peer : clusterInfo.getPeers()) {
+                  HBaseAdmin peerAdmin = createHBaseAdmin(configuration, peer.getAddress());
+                  try {
+                    if (!peerAdmin.isTableAvailable(clusterTableName)) {
+                      HTableDescriptor peerHtd = peerAdmin.getTableDescriptor(Bytes.toBytes(clusterTableName));
+                      HTableDescriptor clonedDescFromZNode = new HTableDescriptor(tableDescFromZNode);
+                      clonedDescFromZNode.setName(Bytes.toBytes(clusterTableName));
+                      for (HColumnDescriptor hcd : clonedDescFromZNode.getColumnFamilies()) {
+                        if (hcd.getScope()>0) {
+                          hcd.setScope(0);
+                        }
+                      }
+                      if (!clonedDescFromZNode.equals(peerHtd)) {
+                        List<HTableDescriptor> issues = results.get(clusterName);
+                        if (issues == null) {
+                          issues = new ArrayList<HTableDescriptor>();
+                          results.put(clusterName, issues);
+                        }
+                        issues.add(clonedDescFromZNode);
+                      }
+                    }
+                  } finally {
+                    closeHBaseAdmin(peerAdmin);
+                  }
+                }
               }
             }
           }
-          if (result.size() != 0) {
-            return result;
-          } else {
-            return null;
-          }
+          return results;
         }
       }));
     }
     LOG.debug("Verifying the htd results");
     try {
-      for (Future<List<HTableDescriptor>> result : results) {
-        List<HTableDescriptor> htds = result.get();
-        if (htds != null) {
-          if (!shouldFixHTDs()) {
-            // TODO : Create an error report as in HBCK
-            String message = "The following htds do not match with the ones in the crosssite htd znode"
-                + htds;
-            System.out.println(message);
-            System.out.println();
-            setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
+      Map<String, List<HTableDescriptor>> issues = new HashMap<String, List<HTableDescriptor>>();
+      for (Future<Map<String, List<HTableDescriptor>>> result : results) {
+        Map<String, List<HTableDescriptor>> htdMap = result.get();
+        for (Entry<String, List<HTableDescriptor>> htdEntry : htdMap.entrySet()) {
+          List<HTableDescriptor> issuesPerCluster = issues.get(htdEntry.getKey());
+          if (issuesPerCluster == null) {
+            issues.put(htdEntry.getKey(), htdEntry.getValue());
           } else {
-            for (HTableDescriptor htd : htds) {
-              // Should we be more specific by going to every table in the
-              // main cluster and the peer and then checking it
-              String tableName = Bytes.toString(htd.getName());
-              if (crossSiteHBaseAdmin.isTableEnabled(tableName)) {
-                LOG.debug("Disabling the table " + tableName);
-                crossSiteHBaseAdmin.disableTable(tableName);
-                LOG.debug("Disabled the table " + tableName);
-                LOG.debug("Modifying the table " + tableName);
-                crossSiteHBaseAdmin.modifyTable(htd.getName(), htd);
-                LOG.debug("Modified the table " + tableName);
-                LOG.debug("Enabling the table " + tableName);
-                crossSiteHBaseAdmin.enableTable(tableName);
-                LOG.debug("Enabled the table " + tableName);
-              } else if (crossSiteHBaseAdmin.isTableDisabled(tableName)) {
-                LOG.debug("Modifying the table " + tableName);
-                crossSiteHBaseAdmin.modifyTable(htd.getName(), htd);
-                LOG.debug("Modified the table " + tableName);
-              } else {
-                LOG.error("Table " + tableName + " not in ENABLED or DISABLED state");
+            issuesPerCluster.addAll(htdEntry.getValue());
+          }
+        }
+      }
+      if(!issues.isEmpty()) {
+        if (!shouldFixHTDs()) {
+          // TODO : Create an error report as in HBCK
+          String message = "The following htds do not match with the ones in the crosssite htd znode"
+              + issues;
+          System.out.println(message);
+          System.out.println();
+          setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
+        } else {
+          for(Entry<String, List<HTableDescriptor>> issueEntry : issues.entrySet()) {
+            ClusterInfo clusterInfo = crossSiteZnodes.getClusterInfo(issueEntry.getKey());
+            if (clusterInfo != null) {
+              HBaseAdmin admin = createHBaseAdmin(getConf(), clusterInfo.getAddress());
+              try {
+                for (HTableDescriptor htd : issueEntry.getValue()) {
+                  boolean enabled = false;
+                  if (!admin.isTableDisabled(htd.getName())) {
+                    LOG.debug("Disabling the table " + htd.getNameAsString());
+                    admin.disableTable(htd.getName());
+                    enabled = true;
+                  }
+                  LOG.debug("Modifying the table " + htd.getNameAsString());
+                  admin.modifyTable(htd.getName(), htd);
+                  if (enabled) {
+                    LOG.debug("Enabling the table " + htd.getNameAsString());
+                    admin.enableTable(htd.getName());
+                  }
+                }
+              } finally {
+                closeHBaseAdmin(admin);
               }
             }
           }
@@ -435,16 +468,27 @@ public class CSBTClusterVerifier extends Configured implements Tool {
     LOG.debug("Collecting the list of clusters and the list of tables");
     Map<String, ClusterInfo> clusterInfos = crossSiteZnodes.listClusterInfos();
     final HTableDescriptor[] tableDescsFromZnode = crossSiteZnodes.listTableDescs();
-    List<Future<Map<String, List<String>>>> results = new ArrayList<Future<Map<String, List<String>>>>();
+    List<Future<Map<String, Map<String, HTableDescriptor>>>> results = 
+        new ArrayList<Future<Map<String, Map<String, HTableDescriptor>>>>();
     for (final Entry<String, ClusterInfo> entry : clusterInfos.entrySet()) {
-      results.add(executor.submit(new CrossSiteCallable<Map<String, List<String>>>(getConf()) {
+      results
+          .add(executor
+              .submit(new CrossSiteCallable<Map<String, Map<String, HTableDescriptor>>>(
+                  getConf()) {
 
         @Override
-        public Map<String, List<String>> call() throws Exception {
+        public Map<String, Map<String, HTableDescriptor>> call() throws Exception {
+          Map<String, Map<String, HTableDescriptor>> results = 
+              new HashMap<String, Map<String, HTableDescriptor>>();
           String clusterName = entry.getKey();
+          ClusterInfo clusterInfo = entry.getValue();
           HBaseAdmin admin = createHBaseAdmin(configuration, entry.getValue().getAddress());
-          HTableDescriptor[] listTables = admin.listTables();
-          List<String> notFoundTableDesc = new ArrayList<String>();
+          HTableDescriptor[] listTables = null;
+          try {
+            listTables = admin.listTables(); 
+          } finally {
+            closeHBaseAdmin(admin);
+          }
           for (HTableDescriptor tableDescFromZNode : tableDescsFromZnode) {
             boolean found = false;
             String clusterTableName = CrossSiteUtil.getClusterTableName(
@@ -456,58 +500,107 @@ public class CSBTClusterVerifier extends Configured implements Tool {
               }
             }
             if (!found) {
-              notFoundTableDesc.add(Bytes.toString(tableDescFromZNode.getName()));
+              Map<String, HTableDescriptor> notFoundTableMap = results.get(clusterName);
+              if (results.get(clusterName) == null) {
+                notFoundTableMap = new HashMap<String, HTableDescriptor>();
+                results.put(clusterName, notFoundTableMap);
+              }
+              HTableDescriptor htd = new HTableDescriptor(tableDescFromZNode);
+              htd.setName(Bytes.toBytes(clusterTableName));
+              notFoundTableMap.put(clusterTableName, htd);
+            }
+            if (ClusterVerifierUtil.isReplicatedTable(tableDescFromZNode)) {
+              // check the tables in peers
+              if (clusterInfo.getPeers() != null) {
+                for (ClusterInfo peer : clusterInfo.getPeers()) {
+                  HBaseAdmin peerAdmin = createHBaseAdmin(configuration, peer.getAddress());
+                  try {
+                    if (!peerAdmin.isTableAvailable(clusterTableName)) {
+                      Map<String, HTableDescriptor> notFoundTableMap = results.get(peer.getName());
+                      if (results.get(peer.getName()) == null) {
+                        notFoundTableMap = new HashMap<String, HTableDescriptor>();
+                        results.put(peer.getName(), notFoundTableMap);
+                      }
+                      HTableDescriptor htd = new HTableDescriptor(tableDescFromZNode);
+                      htd.setName(Bytes.toBytes(clusterTableName));
+                      for (HColumnDescriptor hcd : htd.getColumnFamilies()) {
+                        if (hcd.getScope()>0) {
+                          hcd.setScope(0);
+                        }
+                      }
+                      notFoundTableMap.put(clusterTableName, htd);
+                    }
+                  } finally {
+                    closeHBaseAdmin(peerAdmin);
+                  }
+                }
+              }
             }
           }
-          if (notFoundTableDesc.size() != 0) {
-            Map<String, List<String>> result = new HashMap<String, List<String>>();
-            result.put(clusterName, notFoundTableDesc);
-            return result;
-          } else {
-            return null;
-          }
+          return results;
         }
       }));
     }
     LOG.debug("Verifying the results");
     try {
-      for (Future<Map<String, List<String>>> result : results) {
-        Map<String, List<String>> issues = result.get();
+      Map<String, Map<String, HTableDescriptor>> issues = new HashMap<String, Map<String, HTableDescriptor>>();
+      for (Future<Map<String, Map<String, HTableDescriptor>>> result : results) {
+        Map<String, Map<String, HTableDescriptor>> htdMap = result.get();
+        for (Entry<String, Map<String, HTableDescriptor>> htdEntry : htdMap.entrySet()) {
+          Map<String, HTableDescriptor> issuesPerCluster = issues.get(htdEntry.getKey());
+          if (issuesPerCluster == null) {
+            issues.put(htdEntry.getKey(), htdEntry.getValue());
+          } else {
+            issuesPerCluster.putAll(htdEntry.getValue());
+          }
+        }
+      }
+      if (!issues.isEmpty()) {
         LOG.debug("Mismatch in the tables actually created in the clusters with the list of tables in the crosssite table znode:"
             + issues);
-        if (issues != null) {
-          Set<Entry<String, List<String>>> clusterWithIssues = issues.entrySet();
-          if (!shouldFixTables()) {
-            for (Entry<String, List<String>> entry : clusterWithIssues) {
-              // TODO : Create an error report as in HBCK
-              String message = "The cluster " + entry.getKey();
-              message += " has the following missing tables " + entry.getValue();
-              System.out.println(message);
-              System.out.println();
+        Set<Entry<String, Map<String, HTableDescriptor>>> clusterWithIssues = issues.entrySet();
+        if (!shouldFixTables()) {
+          for (Entry<String, Map<String, HTableDescriptor>> entry : clusterWithIssues) {
+            // TODO : Create an error report as in HBCK
+            String message = "The cluster " + entry.getKey();
+            StringBuilder tables = new StringBuilder();
+            if (entry.getValue() != null) {
+              for (String table : entry.getValue().keySet()) {
+                tables.append(table).append(" ");
+              }
             }
-            setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
-          } else {
-            // TODO : Not doing using callable
-            LOG.debug("Creating tables in the clusters which does not have the table as given in the table znode");
-            for (Entry<String, List<String>> entry : clusterWithIssues) {
-              List<String> tables = entry.getValue();
-              for (String tableName : tables) {
+            message += " has the following missing tables " + tables.toString();
+            System.out.println(message);
+            System.out.println();
+          }
+          setReturnCode(RETURN_CODE.REPORT_ERROR.ordinal());
+        } else {
+          LOG.debug("Creating tables in the clusters which does not have the table as given in the table znode");
+          for (Entry<String, Map<String, HTableDescriptor>> entry : clusterWithIssues) {
+            Map<String, HTableDescriptor> tableDescs = entry.getValue();
+            if (tableDescs != null) {
+              for (Entry<String, HTableDescriptor> tableDesc : tableDescs.entrySet()) {
                 String clusterName = entry.getKey();
-                LOG.debug("Creating table " + tableName + " in the cluster " + clusterName);
-                byte[][] tableSplitKeys = crossSiteZnodes.getTableSplitKeys(tableName);
-                HTableDescriptor tableDesc = crossSiteZnodes.getTableDesc(tableName);
-                ClusterLocator clusterLocator = crossSiteZnodes.getClusterLocator(tableName);
+                LOG.debug("Creating table " + tableDesc.getKey() + " in the cluster "
+                    + clusterName);
+                String tableName = CrossSiteUtil.getCrossSiteTableName(tableDesc.getKey());
+                String actualClusterName = CrossSiteUtil.getClusterName(tableDesc.getKey());
                 ClusterInfo clusterInfo = crossSiteZnodes.getClusterInfo(clusterName);
-                if(clusterInfo != null) {
-                // TODO : Can we add a createTable that creates a table in a
-                // give cluster?
-                ClusterVerifierUtil.createTableInCluster(tableDesc, tableSplitKeys, clusterLocator,
-                    clusterName, clusterInfo, crossSiteHBaseAdmin);
-                LOG.debug("Created table " + tableName + " in the cluster " + clusterName);
-                setReturnCode(RETURN_CODE.ERROR_FIXED.ordinal());
+                ClusterLocator clusterLocator = crossSiteZnodes.getClusterLocator(tableName);
+                byte[][] tableSplitKeys = clusterLocator.getSplitKeys(actualClusterName,
+                    crossSiteZnodes.getTableSplitKeys(tableName));
+                if (clusterInfo != null) {
+                  HBaseAdmin admin = createHBaseAdmin(getConf(), clusterInfo.getAddress());
+                  try {
+                    admin.createTable(tableDesc.getValue(), tableSplitKeys);
+                  } finally {
+                    closeHBaseAdmin(admin);
+                  }
+                  LOG.debug("Created table " + tableDesc.getKey() + " in the cluster "
+                      + clusterName);
+                  setReturnCode(RETURN_CODE.ERROR_FIXED.ordinal());
                 }
               }
-
             }
           }
         }
@@ -524,6 +617,16 @@ public class CSBTClusterVerifier extends Configured implements Tool {
     Configuration clusterConf = new Configuration(baseConf);
     ZKUtil.applyClusterKeyToConf(clusterConf, clusterAddress);
     return new HBaseAdmin(clusterConf);
+  }
+
+  private static void closeHBaseAdmin(HBaseAdmin admin) {
+    if (admin != null) {
+      try {
+        admin.close();
+      } catch (IOException e) {
+        LOG.warn("Fail to close the HBaseAdmin", e);
+      }
+    }
   }
 
   void fixTables(boolean fixTables) {
