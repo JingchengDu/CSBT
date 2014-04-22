@@ -456,7 +456,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   @Override
   public Result[] get(List<Get> gets) throws IOException {
     Map<String, Map<Integer, Get>> clusterMap = new TreeMap<String, Map<Integer, Get>>();
-    Map<Integer, Result> results = new HashMap<Integer, Result>();
+    Map<Integer, Result> results = new TreeMap<Integer, Result>();
     CachedZookeeperInfo cachedZKInfo = this.cachedZKInfo;
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
     int index = 0;
@@ -464,7 +464,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       String clusterName = clusterLocator.getClusterName(get.getRow());
       Map<Integer, Get> getMap = clusterMap.get(clusterName);
       if(getMap == null) {
-        getMap = new HashMap<Integer, Get>();
+        getMap = new TreeMap<Integer, Get>();
         clusterMap.put(clusterName, getMap);
       }
       getMap.put(Integer.valueOf(index++), get);
