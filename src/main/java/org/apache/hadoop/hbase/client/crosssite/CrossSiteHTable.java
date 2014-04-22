@@ -22,7 +22,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -337,31 +336,38 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       return;
     }
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
-    Map<String, List<Row>> tableMap = new TreeMap<String, List<Row>>();
-    Map<Row, Object> rmap = new HashMap<Row, Object>();
+    Map<String, Map<Integer, Row>> clusterMap = new TreeMap<String, Map<Integer,Row>>();
+    Map<Integer, Object> rmap = new HashMap<Integer, Object>();
+    int index = 0;
     for (Row action : actions) {
       String clusterName = clusterLocator.getClusterName(action.getRow());
-      List<Row> rows = tableMap.get(clusterName);
+      Map<Integer, Row> rows = clusterMap.get(clusterName);
       if (rows == null) {
-        rows = new ArrayList<Row>();
-        tableMap.put(clusterName, rows);
+        rows = new HashMap<Integer, Row>();
+        clusterMap.put(clusterName, rows);
       }
-      rows.add(action);
+      rows.put(Integer.valueOf(index++), action);
     }
 
     final AtomicBoolean hasError = new AtomicBoolean(false);
-    Map<String, Future<Map<Row, Object>>> futures = 
-        new HashMap<String, Future<Map<Row, Object>>>();
-    for (final Entry<String, List<Row>> entry : tableMap.entrySet()) {
-      futures.put(entry.getKey(), pool.submit(new Callable<Map<Row, Object>>() {
+    Map<String, Future<Map<Integer, Object>>> futures = 
+        new HashMap<String, Future<Map<Integer, Object>>>();
+    for (final Entry<String, Map<Integer, Row>> entry : clusterMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Map<Integer, Object>>() {
 
         @Override
-        public Map<Row, Object> call() throws Exception {
-          Map<Row, Object> map = new HashMap<Row, Object>();
-          List<Row> rows = entry.getValue();
-          Object[] rs = new Object[rows.size()];
+        public Map<Integer, Object> call() throws Exception {
+          Map<Integer, Object> map = new HashMap<Integer, Object>();
+          Map<Integer, Row> rowMap = entry.getValue();
+          Object[] rs = new Object[rowMap.size()];
+          List<Integer> indexes = new ArrayList<Integer>(rowMap.size());
+          List<Row> rows = new ArrayList<Row>(rowMap.size());
           try {
             HTableInterface table = getClusterHTable(entry.getKey());
+            for (Entry<Integer, Row> rowEntry : rowMap.entrySet()) {
+              indexes.add(rowEntry.getKey());
+              rows.add(rowEntry.getValue());
+            }
             table.batch(rows, rs);
           } catch (IOException e) {
             // need clear the cached HTable if the connection is refused
@@ -371,8 +377,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
           } finally {
             int index = 0;
             for (Object r : rs) {
-              Row g = rows.get(index++);
-              map.put(g, r);
+              map.put(indexes.get(index++), r);
             }
           }
           return map;
@@ -381,16 +386,15 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
 
     try {
-      for (Entry<String, Future<Map<Row, Object>>> result : futures.entrySet()) {
+      for (Entry<String, Future<Map<Integer, Object>>> result : futures.entrySet()) {
         rmap.putAll(result.getValue().get());
       }
     } catch (Exception e) {
       // do nothing
     }
 
-    int index = 0;
-    for (Row row : actions) {
-      results[index++] = rmap.get(row);
+    for (int i = 0; i < actions.size(); i++) {
+      results[i] = rmap.get(Integer.valueOf(i));
     }
     if (hasError.get()) {
       throw new IOException();
@@ -451,37 +455,43 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    */
   @Override
   public Result[] get(List<Get> gets) throws IOException {
-    Map<String, List<Get>> tableMap = new TreeMap<String, List<Get>>();
-    Map<Get, Result> results = new TreeMap<Get, Result>(new GetComparator());
+    Map<String, Map<Integer, Get>> clusterMap = new TreeMap<String, Map<Integer, Get>>();
+    Map<Integer, Result> results = new HashMap<Integer, Result>();
     CachedZookeeperInfo cachedZKInfo = this.cachedZKInfo;
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
+    int index = 0;
     for (Get get : gets) {
       String clusterName = clusterLocator.getClusterName(get.getRow());
-      List<Get> gs = tableMap.get(clusterName);
-      if (gs == null) {
-        gs = new ArrayList<Get>();
-        tableMap.put(clusterName, gs);
+      Map<Integer, Get> getMap = clusterMap.get(clusterName);
+      if(getMap == null) {
+        getMap = new HashMap<Integer, Get>();
+        clusterMap.put(clusterName, getMap);
       }
-      gs.add(get);
+      getMap.put(Integer.valueOf(index++), get);
     }
 
-    Map<String, Future<Map<Get, Result>>> futures = 
-        new HashMap<String, Future<Map<Get, Result>>>();
+    Map<String, Future<Map<Integer, Result>>> futures = 
+        new HashMap<String, Future<Map<Integer, Result>>>();
     final Map<String, ClusterInfo> clusterInfos = cachedZKInfo.clusterInfos;
-    for (final Entry<String, List<Get>> entry : tableMap.entrySet()) {
-      futures.put(entry.getKey(), pool.submit(new Callable<Map<Get, Result>>() {
+    for (final Entry<String, Map<Integer, Get>> entry : clusterMap.entrySet()) {
+      futures.put(entry.getKey(), pool.submit(new Callable<Map<Integer, Result>>() {
 
         @Override
-        public Map<Get, Result> call() throws Exception {
-          Map<Get, Result> map = new TreeMap<Get, Result>(new GetComparator());
+        public Map<Integer, Result> call() throws Exception {
+          Map<Integer, Result> map = new TreeMap<Integer, Result>();
           try {
             HTableInterface table = getClusterHTable(entry.getKey());
-            List<Get> gs = entry.getValue();
+            List<Get> gs = new ArrayList<Get>(entry.getValue().size());
+            List<Integer> indexes = new ArrayList<Integer>(entry.getValue().size());
+            for (Entry<Integer, Get> getEntry : entry.getValue().entrySet()) {
+              indexes.add(getEntry.getKey());
+              gs.add(getEntry.getValue());
+            }
             Result[] rs = table.get(gs);
             int index = 0;
             for (Result r : rs) {
-              Get g = gs.get(index++);
-              map.put(g, r);
+              map.put(indexes.get(index), r);
+              index++;
             }
           } catch (IOException e) {
             // need clear the cached HTable if the connection is refused
@@ -497,12 +507,17 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
                 throw e;
               } else {
                 try {
-                  List<Get> gs = entry.getValue();
+                  List<Get> gs = new ArrayList<Get>(entry.getValue().size());
+                  List<Integer> indexes = new ArrayList<Integer>(entry.getValue().size());
+                  for (Entry<Integer, Get> getEntry : entry.getValue().entrySet()) {
+                    indexes.add(getEntry.getKey());
+                    gs.add(getEntry.getValue());
+                  }
                   Result[] rs = table.get(gs);
                   int index = 0;
                   for (Result r : rs) {
-                    Get g = gs.get(index++);
-                    map.put(g, r);
+                    map.put(indexes.get(index), r);
+                    index++;
                   }
                 } finally {
                   try {
@@ -523,16 +538,15 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
 
     try {
-      for (Entry<String, Future<Map<Get, Result>>> result : futures.entrySet()) {
+      for (Entry<String, Future<Map<Integer, Result>>> result : futures.entrySet()) {
         results.putAll(result.getValue().get());
       }
     } catch (Exception e) {
       throw new IOException(e);
     }
     Result[] rs = new Result[gets.size()];
-    int index = 0;
-    for (Get get : gets) {
-      rs[index++] = results.get(get);
+    for (int i = 0; i < gets.size(); i++) {
+      rs[i] = results.get(Integer.valueOf(i));
     }
     return rs;
   }
@@ -1328,18 +1342,6 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   @Override
   public void clearRegionCache() {
     throw new UnsupportedOperationException();
-  }
-
-  /**
-   * The comparator to compare the Get objects by rows.
-   */
-  private class GetComparator implements Comparator<Get> {
-
-    @Override
-    public int compare(Get o1, Get o2) {
-      return Bytes.compareTo(o1.getRow(), o2.getRow());
-    }
-
   }
 
   /**
