@@ -379,7 +379,7 @@ public class CSBTClusterVerifier extends Configured implements Tool {
                 for (ClusterInfo peer : clusterInfo.getPeers()) {
                   HBaseAdmin peerAdmin = createHBaseAdmin(configuration, peer.getAddress());
                   try {
-                    if (!peerAdmin.isTableAvailable(clusterTableName)) {
+                    if (peerAdmin.isTableAvailable(clusterTableName)) {
                       HTableDescriptor peerHtd = peerAdmin.getTableDescriptor(Bytes.toBytes(clusterTableName));
                       HTableDescriptor clonedDescFromZNode = new HTableDescriptor(tableDescFromZNode);
                       clonedDescFromZNode.setName(Bytes.toBytes(clusterTableName));
