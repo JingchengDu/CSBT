@@ -24,28 +24,21 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.Message;
+import com.google.protobuf.Service;
+import com.google.protobuf.ServiceException;
+
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Coprocessor;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.client.Append;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.HConnectionManager;
-import org.apache.hadoop.hbase.client.HTableFactory;
-import org.apache.hadoop.hbase.client.HTableInterface;
-import org.apache.hadoop.hbase.client.HTableInterfaceFactory;
-import org.apache.hadoop.hbase.client.Increment;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.Row;
-import org.apache.hadoop.hbase.client.RowLock;
-import org.apache.hadoop.hbase.client.RowMutations;
-import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Call;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Callback;
 import org.apache.hadoop.hbase.crosssite.CrossSiteConstants;
-import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
+import org.apache.hadoop.hbase.ipc.CoprocessorRpcChannel;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.PoolMap;
 import org.apache.hadoop.hbase.util.PoolMap.PoolType;
@@ -320,6 +313,11 @@ public class CrossSiteHTablePool implements Closeable {
     }
 
     @Override
+    public TableName getName() {
+      return table.getName();
+    }
+
+    @Override
     public Configuration getConfiguration() {
       return table.getConfiguration();
     }
@@ -335,6 +333,11 @@ public class CrossSiteHTablePool implements Closeable {
     }
 
     @Override
+    public Boolean[] exists(List<Get> gets) throws IOException {
+      return table.exists(gets);
+    }
+
+    @Override
     public void batch(List<? extends Row> actions, Object[] results) throws IOException,
         InterruptedException {
       table.batch(actions, results);
@@ -344,6 +347,19 @@ public class CrossSiteHTablePool implements Closeable {
     public Object[] batch(List<? extends Row> actions) throws IOException,
         InterruptedException {
       return table.batch(actions);
+    }
+
+    @Override
+    public <R> void batchCallback(
+        final List<?extends Row> actions, final Object[] results, final Callback<R> callback)
+        throws IOException, InterruptedException {
+      table.batchCallback(actions, results, callback);
+    }
+
+    @Override
+    public <R> Object[] batchCallback(
+        List<? extends Row> actions, Callback<R> callback) throws IOException, InterruptedException {
+      return table.batchCallback(actions, callback);
     }
 
     @Override
@@ -422,6 +438,12 @@ public class CrossSiteHTablePool implements Closeable {
     }
 
     @Override
+    public long incrementColumnValue(byte[] row, byte[] family, byte[] qualifier,
+        long amount, Durability durability) throws IOException {
+      return table.incrementColumnValue(row, family, qualifier, amount, durability);
+    }
+
+    @Override
     public long incrementColumnValue(byte[] row, byte[] family,
         byte[] qualifier, long amount, boolean writeToWAL) throws IOException {
       return table.incrementColumnValue(row, family, qualifier, amount,
@@ -447,41 +469,19 @@ public class CrossSiteHTablePool implements Closeable {
       returnTable(table);
     }
 
-    /**
-     * @deprecated {@link RowLock} and associated operations are deprecated
-     */
     @Override
-    public RowLock lockRow(byte[] row) throws IOException {
-      return table.lockRow(row);
-    }
-
-    /**
-     * @deprecated {@link RowLock} and associated operations are deprecated
-     */
-    @Override
-    public void unlockRow(RowLock rl) throws IOException {
-      table.unlockRow(rl);
-    }
-
-    @Override
-    public <T extends CoprocessorProtocol> T coprocessorProxy(
-        Class<T> protocol, byte[] row) {
-      return table.coprocessorProxy(protocol, row);
-    }
-
-    @Override
-    public <T extends CoprocessorProtocol, R> Map<byte[], R> coprocessorExec(
+    public <T extends Service, R> Map<byte[], R> coprocessorService(
         Class<T> protocol, byte[] startKey, byte[] endKey,
         Batch.Call<T, R> callable) throws IOException, Throwable {
-      return table.coprocessorExec(protocol, startKey, endKey, callable);
+      return table.coprocessorService(protocol, startKey, endKey, callable);
     }
 
     @Override
-    public <T extends CoprocessorProtocol, R> void coprocessorExec(
+    public <T extends Service, R> void coprocessorService(
         Class<T> protocol, byte[] startKey, byte[] endKey,
         Batch.Call<T, R> callable, Batch.Callback<R> callback)
         throws IOException, Throwable {
-      table.coprocessorExec(protocol, startKey, endKey, callable, callback);
+      table.coprocessorService(protocol, startKey, endKey, callable, callback);
     }
 
     @Override
@@ -519,6 +519,11 @@ public class CrossSiteHTablePool implements Closeable {
     }
 
     @Override
+    public void setAutoFlushTo(boolean autoFlush) {
+      table.setAutoFlushTo(autoFlush);
+    }
+
+    @Override
     public long getWriteBufferSize() {
       return table.getWriteBufferSize();
     }
@@ -534,17 +539,38 @@ public class CrossSiteHTablePool implements Closeable {
     }
 
     @Override
-    public <T extends CoprocessorProtocol, R> Map<byte[], R> coprocessorExec(Class<T> protocol,
-        byte[] startKey, byte[] endKey, String[] clusterNames, Call<T, R> callable)
-        throws IOException, Throwable {
-      return table.coprocessorExec(protocol, startKey, endKey, clusterNames, callable);
+    public CoprocessorRpcChannel coprocessorService(byte[] row) {
+      return table.coprocessorService(row);
     }
 
     @Override
-    public <T extends CoprocessorProtocol, R> void coprocessorExec(Class<T> protocol,
+    public <T extends Service, R> Map<byte[], R> coprocessorService(Class<T> protocol,
+        byte[] startKey, byte[] endKey, String[] clusterNames, Call<T, R> callable)
+        throws IOException, Throwable {
+      return table.coprocessorService(protocol, startKey, endKey, clusterNames, callable);
+    }
+
+    @Override
+    public <T extends Service, R> void coprocessorService(Class<T> protocol,
         byte[] startKey, byte[] endKey, String[] clusterNames, Call<T, R> callable,
         Callback<R> callback) throws IOException, Throwable {
-      table.coprocessorExec(protocol, startKey, endKey, clusterNames, callable, callback);
+      table.coprocessorService(protocol, startKey, endKey, clusterNames, callable, callback);
     }
+
+    @Override
+    public <R extends Message> Map<byte[], R> batchCoprocessorService(
+        Descriptors.MethodDescriptor methodDescriptor, Message request,
+        byte[] startKey, byte[] endKey, R responsePrototype) throws ServiceException, Throwable {
+      return table.batchCoprocessorService(methodDescriptor, request, startKey, endKey, responsePrototype);
+    }
+
+    @Override
+    public <R extends Message> void batchCoprocessorService(
+        Descriptors.MethodDescriptor methodDescriptor, Message request,
+        byte[] startKey, byte[] endKey, R responsePrototype, Callback<R> callback)
+        throws ServiceException, Throwable {
+      table.batchCoprocessorService(methodDescriptor, request, startKey, endKey, responsePrototype);
+    }
+
   }
 }

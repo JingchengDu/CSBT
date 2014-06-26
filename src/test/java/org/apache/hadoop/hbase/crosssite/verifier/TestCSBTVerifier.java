@@ -58,6 +58,8 @@ public class TestCSBTVerifier {
 
   @BeforeClass
   public static void setUpBeforeClass() throws Exception {
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -77,7 +79,7 @@ public class TestCSBTVerifier {
     TEST_UTIL3.startMiniCluster(1);
     TEST_UTIL3.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL3.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
     CrossSiteHBaseAdmin admin = new CrossSiteHBaseAdmin(TEST_UTIL1.getConfiguration());
     admin.addCluster(HBASE1, TEST_UTIL1.getClusterKey());

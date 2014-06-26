@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.client.crosssite;
 
 import java.io.ByteArrayOutputStream;
-import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -43,21 +42,7 @@ import java.util.regex.Pattern;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.ClusterStatus;
-import org.apache.hadoop.hbase.CrossSiteClusterStatus;
-import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.InvalidFamilyOperationException;
-import org.apache.hadoop.hbase.MasterNotRunningException;
-import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.TableExistsException;
-import org.apache.hadoop.hbase.TableNotDisabledException;
-import org.apache.hadoop.hbase.TableNotEnabledException;
-import org.apache.hadoop.hbase.TableNotFoundException;
-import org.apache.hadoop.hbase.UnknownRegionException;
-import org.apache.hadoop.hbase.ZooKeeperConnectionException;
+import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.client.CrossSiteCallable;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HConnection;
@@ -74,13 +59,12 @@ import org.apache.hadoop.hbase.crosssite.TableAbnormalStateException;
 import org.apache.hadoop.hbase.crosssite.locator.ClusterLocator;
 import org.apache.hadoop.hbase.crosssite.locator.ClusterLocatorRPCObject;
 import org.apache.hadoop.hbase.crosssite.locator.PrefixClusterLocator;
-import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
-import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.SnapshotDescription;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.SnapshotDescription.Type;
-import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest.CompactionState;
+import org.apache.hadoop.hbase.protobuf.generated.AdminProtos.GetRegionInfoResponse.CompactionState;
+import org.apache.hadoop.hbase.protobuf.generated.MasterProtos;
 import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
-import org.apache.hadoop.hbase.replication.ReplicationZookeeper.PeerState;
+import org.apache.hadoop.hbase.replication.ReplicationException;
 import org.apache.hadoop.hbase.snapshot.HBaseSnapshotException;
 import org.apache.hadoop.hbase.snapshot.RestoreSnapshotException;
 import org.apache.hadoop.hbase.snapshot.SnapshotCreationException;
@@ -100,7 +84,7 @@ import com.google.common.base.Strings;
  * CrossSiteHBaseAdmin to create, drop, list, enable and disable cross site tables. Use it also to
  * add and drop table column families.
  */
-public class CrossSiteHBaseAdmin extends HBaseAdmin {
+public class CrossSiteHBaseAdmin implements Abortable {
 
   public static final String ENABLED_STRING = "enabled";
   public static final String DISABLED_STRING = "disabled";
@@ -119,7 +103,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   private boolean aborted;
 
   public CrossSiteHBaseAdmin(Configuration conf) throws IOException, KeeperException {
-    super();
+//    super();
     // create the connection to the global zk of the CrossSiteHBaseAdmin
     Configuration crossSiteZKConf = new Configuration(conf);
     ZKUtil
@@ -168,7 +152,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void createTable(HTableDescriptor desc) throws IOException {
     createTable(desc, null);
   }
@@ -193,7 +176,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           between test-for-existence and attempt-at-creation).
    * @throws IOException
    */
-  @Override
   public void createTable(HTableDescriptor desc, byte[][] splitKeys) throws IOException {
     createTable(desc, splitKeys, new PrefixClusterLocator(), true);
   }
@@ -227,7 +209,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           between test-for-existence and attempt-at-creation).
    * @throws IOException
    */
-  @Override
   public void createTable(HTableDescriptor desc, byte[] startKey, byte[] endKey, int numRegions)
       throws IOException {
     createTable(desc, startKey, endKey, numRegions, new PrefixClusterLocator(), true);
@@ -254,7 +235,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *          the total number of regions to create
    * @param locator
    *          cluster locator for table
-   * @param createAgainIfAlreadyExist
+   * @param createAgainIfAlreadyExists
    *          deletes and creates again if already exists           
    * 
    * @throws IllegalArgumentException
@@ -299,7 +280,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    */
   public void createTable(final HTableDescriptor desc, final byte[][] splitKeys,
       ClusterLocator locator, boolean createAgainIfAlreadyExists) throws IOException {
-    HTableDescriptor.isLegalTableName(desc.getName());
+   // HTableDescriptor.isLegalTableName(desc.getName());
     if (splitKeys != null && splitKeys.length > 1) {
       Arrays.sort(splitKeys, Bytes.BYTES_COMPARATOR);
       // Verify there are no duplicate split keys
@@ -344,7 +325,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @see #disableTable(byte[])
    * @see #enableTableAsync(byte[])
    */
-  @Override
   public void enableTable(final String tableName) throws IOException {
     try {
       enableTableInternal(tableName);
@@ -371,7 +351,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @see #disableTable(byte[])
    * @see #enableTableAsync(byte[])
    */
-  @Override
   public void enableTable(byte[] tableName) throws IOException {
     enableTable(Bytes.toString(tableName));
   }
@@ -525,7 +504,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableEnabled(byte[] tableName) throws IOException {
     return isTableEnabled(tableName, false);
   }
@@ -549,7 +527,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableEnabled(String tableName) throws IOException {
     return isTableEnabled(tableName, false);
   }
@@ -577,7 +554,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableDisabled(byte[] tableName) throws IOException {
     return isTableDisabled(tableName, false);
   }
@@ -601,7 +577,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableDisabled(String tableName) throws IOException {
     return isTableDisabled(tableName, false);
   }
@@ -629,7 +604,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableAvailable(String tableName) throws IOException {
     return isTableAvailable(tableName, false);
   }
@@ -657,7 +631,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public boolean isTableAvailable(byte[] tableName) throws IOException {
     return isTableAvailable(tableName, false);
   }
@@ -681,7 +654,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public HTableDescriptor[] listTables() throws IOException {
     try {
       return znodes.listTableDescs();
@@ -700,7 +672,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @see #listTables()
    */
-  @Override
   public HTableDescriptor[] listTables(Pattern pattern) throws IOException {
     try {
       return znodes.listTableDescs(pattern);
@@ -719,7 +690,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @see #listTables(java.util.regex.Pattern)
    */
-  @Override
   public HTableDescriptor[] listTables(String regex) throws IOException {
     return listTables(Pattern.compile(regex));
   }
@@ -1067,8 +1037,8 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
       if (!peerMap.containsKey(peer.getFirst())) {
         rAdmin.addPeer(peer.getFirst(), peer.getSecond());
       } else {
-        String peerState = rAdmin.getPeerState(peer.getFirst());
-        if (!PeerState.ENABLED.name().equals(peerState)) {
+        boolean peerState = rAdmin.getPeerState(peer.getFirst());
+        if (!peerState) {
           if (LOG.isDebugEnabled()) {
             LOG.debug("Peer " + peer + " for cluster " + clusterName
                 + " is in disabled state now. Enabling the same.");
@@ -1080,6 +1050,8 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
           }
         }
       }
+    } catch (ReplicationException e) {
+      LOG.error(e);
     } finally {
       try {
         rAdmin.close();
@@ -1115,7 +1087,11 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
       Map<String, String> peerMap = rAdmin.listPeers();
       for (ClusterInfo peer : peers) {
         if (peerMap.containsKey(peer.getName())) {
-          rAdmin.removePeer(peer.getName());
+          try {
+            rAdmin.removePeer(peer.getName());
+          } catch (ReplicationException e) {
+            LOG.error(e);
+          }
         }
       }
     } finally {
@@ -1131,7 +1107,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * Deletes the peers of the cluster, meanwhile delete the replicated tables in these peers.
    * 
    * @param clusterName
-   * @param peers
+   * @param peerNames
    * @throws IOException
    */
   public void deletePeers(final String clusterName, String[] peerNames) throws IOException {
@@ -1175,8 +1151,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   
   /**
    * Disables replication on the given peer that belongs to the specified cluster.
-   * The replication should be previously enabled to disable. 
-   * @see enablePeer
+   * The replication should be previously enabled to disable.
    * @param clusterName
    * @param peerName
    * @throws IOException
@@ -1220,13 +1195,16 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
       Map<String, String> peerMap = rAdmin.listPeers();
       for (ClusterInfo peer : clusterPeers) {
         if (peerMap.containsKey(peer.getName())) {
-          if (rAdmin.getPeerState(peer.getName()).equals(PeerState.ENABLED.name())) {
-            rAdmin.disablePeer(peer.getName());
-          } else {
+            boolean peerState = rAdmin.getPeerState(peer.getName());
+            if (peerState) {
+              rAdmin.disablePeer(peer.getName());
+            } else {
             LOG.error("The peer " + peer.getName() + " Not in ENABLED state.");
           }
         }
       }
+    } catch (ReplicationException e) {
+      LOG.error(e);
     } finally {
       try {
         rAdmin.close();
@@ -1238,8 +1216,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   
   /**
    * Enables replication on the given peer that belongs to the specified cluster.
-   * The replication should be previously disabled to enable. 
-   * @see disablePeer
+   * The replication should be previously disabled to enable.
    * @param clusterName
    * @param peerName
    * @throws IOException
@@ -1283,13 +1260,16 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
       Map<String, String> peerMap = rAdmin.listPeers();
       for (ClusterInfo peer : clusterPeers) {
         if (peerMap.containsKey(peer.getName())) {
-          if (rAdmin.getPeerState(peer.getName()).equals(PeerState.DISABLED.name())) {
+          boolean peerState = rAdmin.getPeerState(peer.getName());
+          if (peerState) {
             rAdmin.enablePeer(peer.getName());
           } else {
             LOG.error("The peer " + peer.getName() + " Not in DISABLED state.");
           }
         }
       }
+    } catch (ReplicationException e) {
+      LOG.error(e);
     } finally {
       try {
         rAdmin.close();
@@ -1461,7 +1441,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public ClusterStatus getClusterStatus() throws IOException {
     try {
       List<String> clusterNames = znodes.listClusters();
@@ -1526,7 +1505,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void flush(final String tableName) throws IOException, InterruptedException {
     // only flush the table
     try {
@@ -1579,7 +1557,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void flush(byte[] tableName) throws IOException, InterruptedException {
     // only flush the table
     flush(Bytes.toString(tableName));
@@ -1594,7 +1571,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public HTableDescriptor[] getTableDescriptors(List<String> tableNames) throws IOException {
     try {
       return znodes.listTableDescs(tableNames);
@@ -1613,7 +1589,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           There could be couple types of IOException TableNotFoundException means the table
    *           doesn't exist. TableNotEnabledException means the table isn't in enabled state.
    */
-  @Override
   public void disableTable(String tableName) throws IOException {
     try {
       disableTableInternal(tableName);
@@ -1632,7 +1607,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           There could be couple types of IOException TableNotFoundException means the table
    *           doesn't exist. TableNotEnabledException means the table isn't in enabled state.
    */
-  @Override
   public void disableTable(byte[] tableName) throws IOException {
     disableTable(Bytes.toString(tableName));
   }
@@ -1738,7 +1712,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void deleteTable(String tableName) throws IOException {
     try {
       deleteTableInternal(tableName);
@@ -1755,7 +1728,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void deleteTable(byte[] tableName) throws IOException {
     deleteTable(Bytes.toString(tableName));
   }
@@ -1875,7 +1847,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
         + " to be delete");
   }
 
-  @Override
   public Configuration getConfiguration() {
     return this.conf;
   }
@@ -2068,7 +2039,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @return True if table exists already.
    * @throws IOException
    */
-  @Override
   public boolean tableExists(String tableName) throws IOException {
     return tableExists(Bytes.toBytes(tableName));
   }
@@ -2079,7 +2049,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @return True if table exists already.
    * @throws IOException
    */
-  @Override
   public boolean tableExists(byte[] tableName) throws IOException {
     final String tableNameAsString = Bytes.toString(tableName);
     // first check the global zk
@@ -2139,7 +2108,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public HTableDescriptor getTableDescriptor(final byte[] tableName) throws IOException {
     return getTableDescriptor(Bytes.toString(tableName));
   }
@@ -2168,7 +2136,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public String[] getTableNames() throws IOException {
     try {
       return znodes.getTableNames();
@@ -2186,7 +2153,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public String[] getTableNames(Pattern pattern) throws IOException {
     try {
       return znodes.getTableNames(pattern);
@@ -2204,7 +2170,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public String[] getTableNames(String regex) throws IOException {
     return getTableNames(Pattern.compile(regex));
   }
@@ -2221,7 +2186,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void addColumn(String tableName, HColumnDescriptor column) throws IOException {
     addColumn(Bytes.toBytes(tableName), column);
   }
@@ -2238,7 +2202,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void addColumn(byte[] tableName, HColumnDescriptor column) throws IOException {
     try {
       addColumnInternal(Bytes.toString(tableName), column);
@@ -2257,10 +2220,9 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
-  public void deleteColumn(byte[] tableName, byte[] columnName) throws IOException {
+  public void deleteColumn(final byte[] tableName,final String columnName) throws IOException {
     try {
-      deleteColumnInternal(Bytes.toString(tableName), columnName);
+      deleteColumnInternal(Bytes.toString(tableName), Bytes.toBytes(columnName));
     } catch (KeeperException e) {
       throw new IOException(e);
     }
@@ -2276,9 +2238,8 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void deleteColumn(String tableName, String columnName) throws IOException {
-    deleteColumn(Bytes.toBytes(tableName), Bytes.toBytes(columnName));
+    deleteColumn(Bytes.toBytes(tableName), columnName);
   }
 
   /**
@@ -2286,12 +2247,11 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * 
    * @param tableName
    *          name of table
-   * @param descriptor
+   * @param column
    *          new column descriptor to use
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void modifyColumn(byte[] tableName, HColumnDescriptor column) throws IOException {
     try {
       modifyColumnInternal(Bytes.toString(tableName), column);
@@ -2308,7 +2268,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * 
    * @param tableName
    *          name of table
-   * @param descriptor
+   * @param column
    *          new column descriptor to use
    * @throws IOException
    *           if a remote or network exception occurs
@@ -2322,7 +2282,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * 
    * @param tableName
    *          name of table
-   * @param descriptor
+   * @param htd
    *          new column descriptor to use
    * @throws IOException
    *           if a remote or network exception occurs
@@ -2336,12 +2296,11 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * 
    * @param tableName
    *          name of table
-   * @param descriptor
+   * @param htd
    *          new column descriptor to use
    * @throws IOException
    *           if a remote or network exception occurs
    */
-  @Override
   public void modifyTable(byte[] tableName, HTableDescriptor htd) throws IOException {
     try {
       modifyTableInternal(tableName, htd);
@@ -2354,7 +2313,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * Modifies the column.
    * 
    * @param tableName
-   * @param columnName
+   * @param hcd
    * @throws IOException
    * @throws KeeperException
    */
@@ -2439,10 +2398,10 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
                       } else {
                         String peerTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
                             clusterName, peer.getName());
-                        HBaseAdmin peerAdmin = createHBaseAmin(configuration, ci.getAddress());
+                        HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
                         try {
                           if (peerAdmin.tableExists(peerTableName)) {
-                            addColumn(configuration, clusterName, peer.getAddress(), tableName,
+                            addColumn(peerAdmin, clusterName, peer.getAddress(), tableName,
                                 peerHcd, true);
                           } else {
                             // create the table in the peer.
@@ -2836,7 +2795,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
       }
       HTableDescriptor htd = admin.getTableDescriptor(Bytes.toBytes(clusterTableName));
       if (htd.hasFamily(columnName)) {
-        admin.deleteColumn(Bytes.toBytes(clusterTableName), columnName);
+        admin.deleteColumn(TableName.valueOf(clusterTableName), columnName);
       } else {
         if (LOG.isDebugEnabled()) {
           LOG.debug("The column " + Bytes.toString(columnName) + " has been deleted from table "
@@ -3018,6 +2977,39 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
     throw new RetriesExhaustedException("Not able to acquire table lock after " + tries + " tries");
   }
 
+  private static void addColumn(HBaseAdmin admin, String clusterName, String clusterAddress,
+      String tableName, HColumnDescriptor hcd, boolean peerCluster) throws IOException {
+    String clusterTableName = CrossSiteUtil.getClusterTableName(tableName, clusterName);
+    try {
+      if (peerCluster) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Disabling " + clusterTableName + " in peer cluster " + clusterName + " : "
+              + clusterAddress + " as part of adding column");
+        }
+        disableTable(admin, clusterTableName);
+      }
+      HTableDescriptor htd = admin.getTableDescriptor(Bytes.toBytes(clusterTableName));
+      if (htd.hasFamily(hcd.getName())) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("The column " + Bytes.toString(hcd.getName()) + " has been existent in table "
+              + clusterTableName);
+        }
+      } else {
+        admin.addColumn(Bytes.toBytes(clusterTableName), hcd);
+      }
+      if (peerCluster) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Enabling " + clusterTableName + " in peer cluster " + clusterName + " : "
+              + clusterAddress + " after adding column");
+        }
+        enableTable(admin, clusterTableName);
+      }
+    } catch (InvalidFamilyOperationException e) {
+      // Supress InvalidFamilyOperationException.
+      LOG.debug(e);
+    }
+  }
+
   private static void addColumn(Configuration conf, String clusterName, String clusterAddress,
       String tableName, HColumnDescriptor hcd, boolean peerCluster) throws IOException {
     String clusterTableName = CrossSiteUtil.getClusterTableName(tableName, clusterName);
@@ -3133,18 +3125,55 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
                       }
                     }
                     for (ClusterInfo peer : ci.getPeers()) {
-                      if (LOG.isDebugEnabled()) {
-                        LOG.debug("Creating the table " + clusterTableName + " to the peer "
-                            + peer.getAddress());
-                      }
                       String peerTableName = CrossSiteUtil.getPeerClusterTableName(
                           tableNameAsString, entry.getKey(), peer.getName());
+                      if (LOG.isDebugEnabled()) {
+                        LOG.debug("Creating the table " + peerTableName + " to the peer "
+                            + peer.getAddress());
+                      }
                       HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
                       try {
                         peerHtd.setName(Bytes.toBytes(peerTableName));
                         disableTable(peerAdmin, peerTableName);
                         peerAdmin.modifyTable(Bytes.toBytes(peerTableName), peerHtd);
                         enableTable(peerAdmin, peerTableName);
+                      } finally {
+                        try {
+                          peerAdmin.close();
+                        } catch (IOException e) {
+                          LOG.warn("Fail to close the HBaseAdmin of peers", e);
+                        }
+                      }
+                    }
+                  }
+                } else if (isReplicatedTable(newHtd)) {
+                  if (ci.getPeers() != null && !ci.getPeers().isEmpty()) {
+                    HTableDescriptor peerHtd = new HTableDescriptor(htd);
+                    for (HColumnDescriptor hcd : peerHtd.getColumnFamilies()) {
+                      if (hcd.getScope() > 0) {
+                        hcd.setScope(0);
+                      } else {
+                        peerHtd.removeFamily(hcd.getName());
+                      }
+                    }
+                    byte[][] splitKeys = getTableSplitsForCluster(tableNameAsString, entry.getKey());
+                    for (ClusterInfo peer : ci.getPeers()) {
+                      String peerTableName = CrossSiteUtil.getPeerClusterTableName(
+                          tableNameAsString, entry.getKey(), peer.getName());
+                      peerHtd.setName(Bytes.toBytes(peerTableName));
+                      HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
+                      try {
+                        if (!peerAdmin.tableExists(peerTableName)) {
+                          if (LOG.isDebugEnabled()) {
+                            LOG.debug("Creating table " + peerTableName + " in peer cluster "
+                                + peer + " as the modified table " + newHtd + " is replicatable");
+                          }
+                          peerAdmin.createTable(peerHtd, splitKeys);
+                        } else {
+                          disableTable(peerAdmin, peerTableName);
+                          peerAdmin.modifyTable(Bytes.toBytes(peerTableName), peerHtd);
+                          enableTable(peerAdmin, peerTableName);
+                        }
                       } finally {
                         try {
                           peerAdmin.close();
@@ -3211,7 +3240,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
     return this.pause * HConstants.RETRY_BACKOFF[triesCount];
   }
 
-  @Override
   public void close() throws IOException {
     if (pool != null) {
       pool.shutdown();
@@ -3259,14 +3287,12 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
     }
   }
 
-  @Override
   public void abort(String why, Throwable e) {
     // Currently does nothing but throw the passed message and exception
     this.aborted = true;
     throw new RuntimeException(why, e);
   }
 
-  @Override
   public boolean isAborted() {
     return this.aborted;
   }
@@ -3279,7 +3305,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    * @throws InterruptedException
    */
-  @Override
   public void compact(String tableNameOrRegionName) throws IOException, InterruptedException {
     compact(tableNameOrRegionName, null);
   }
@@ -3292,7 +3317,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    * @throws InterruptedException
    */
-  @Override
   public void compact(byte[] tableNameOrRegionName) throws IOException, InterruptedException {
     compact(Bytes.toString(tableNameOrRegionName), null);
   }
@@ -3301,12 +3325,11 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * Compacts a column family within a table or an individual region for a cross site big table.
    * Asynchronous operation.
    * 
-   * @param tableNameOrRegionName
+   * @param tableOrRegionName
    * @param columnFamily
    * @throws IOException
    * @throws InterruptedException
    */
-  @Override
   public void compact(String tableOrRegionName, String columnFamily) throws IOException,
       InterruptedException {
     compactInternal(tableOrRegionName, columnFamily, false);
@@ -3321,7 +3344,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    * @throws IOException
    * @throws InterruptedException
    */
-  @Override
   public void compact(byte[] tableNameOrRegionName, byte[] columnFamily) throws IOException,
       InterruptedException {
     compactInternal(Bytes.toString(tableNameOrRegionName), Bytes.toString(columnFamily), false);
@@ -3336,7 +3358,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void majorCompact(String tableNameOrRegionName) throws IOException, InterruptedException {
     majorCompact(tableNameOrRegionName, null);
   }
@@ -3350,7 +3371,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void majorCompact(byte[] tableNameOrRegionName) throws IOException, InterruptedException {
     majorCompact(tableNameOrRegionName, null);
   }
@@ -3366,7 +3386,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void majorCompact(String tableNameOrRegionName, String columnFamily) throws IOException,
       InterruptedException {
     compactInternal(tableNameOrRegionName, columnFamily, true);
@@ -3383,7 +3402,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
    *           if a remote or network exception occurs
    * @throws InterruptedException
    */
-  @Override
   public void majorCompact(byte[] tableNameOrRegionName, byte[] columnFamily) throws IOException,
       InterruptedException {
     compactInternal(Bytes.toString(tableNameOrRegionName), Bytes.toString(columnFamily), true);
@@ -3518,16 +3536,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   private static class DummyRow implements Row {
 
     @Override
-    public void write(DataOutput out) throws IOException {
-      // do nothing
-    }
-
-    @Override
-    public void readFields(DataInput in) throws IOException {
-      // do nothing
-    }
-
-    @Override
     public int compareTo(Row o) {
       return 0;
     }
@@ -3540,7 +3548,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   }
 
   /********************* Unsupported APIs *********************/
-  @Override
   public void unassign(byte[] regionName, boolean force) throws MasterNotRunningException,
       ZooKeeperConnectionException, IOException {
     throw new UnsupportedOperationException();
@@ -3549,23 +3556,20 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
-  public void closeRegion(String regionname, String serverName) throws IOException {
+  public void closeRegion(String regionName, String serverName) throws IOException {
     throw new UnsupportedOperationException();
   }
 
   /**
    * Unsupported.
    */
-  @Override
-  public void closeRegion(byte[] regionname, String serverName) throws IOException {
+  public void closeRegion(byte[] regionName, String serverName) throws IOException {
     throw new UnsupportedOperationException();
   }
 
   /**
    * Unsupported.
    */
-  @Override
   public boolean closeRegionWithEncodedRegionName(String encodedRegionName, String serverName)
       throws IOException {
     throw new UnsupportedOperationException();
@@ -3574,7 +3578,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void closeRegion(ServerName sn, HRegionInfo hri) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3582,16 +3585,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
-  public boolean balanceSwitch(boolean b) throws MasterNotRunningException,
-      ZooKeeperConnectionException {
-    throw new UnsupportedOperationException();
-  }
-
-  /**
-   * Unsupported.
-   */
-  @Override
   public void cloneSnapshot(byte[] snapshotName, byte[] tableName) throws IOException,
       TableExistsException, RestoreSnapshotException, InterruptedException {
     throw new UnsupportedOperationException();
@@ -3600,7 +3593,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void cloneSnapshot(String snapshotName, String tableName) throws IOException,
       TableExistsException, RestoreSnapshotException, InterruptedException {
     throw new UnsupportedOperationException();
@@ -3609,7 +3601,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HConnection getConnection() {
     throw new UnsupportedOperationException();
   }
@@ -3617,7 +3608,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public boolean isMasterRunning() throws MasterNotRunningException, ZooKeeperConnectionException {
     throw new UnsupportedOperationException();
   }
@@ -3625,7 +3615,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void move(byte[] encodedRegionName, byte[] destServerName) throws UnknownRegionException,
       MasterNotRunningException, ZooKeeperConnectionException {
     throw new UnsupportedOperationException();
@@ -3634,7 +3623,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public boolean setBalancerRunning(boolean on, boolean synchronous)
       throws MasterNotRunningException, ZooKeeperConnectionException {
     throw new UnsupportedOperationException();
@@ -3643,7 +3631,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public List<HRegionInfo> getTableRegions(byte[] tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3651,7 +3638,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public synchronized byte[][] rollHLogWriter(String serverName) throws IOException,
       FailedLogCloseException {
     throw new UnsupportedOperationException();
@@ -3660,7 +3646,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public String[] getMasterCoprocessors() {
     throw new UnsupportedOperationException();
   }
@@ -3668,7 +3653,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public CompactionState getCompactionState(String tableNameOrRegionName) throws IOException,
       InterruptedException {
     throw new UnsupportedOperationException();
@@ -3677,7 +3661,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public CompactionState getCompactionState(byte[] tableNameOrRegionName) throws IOException,
       InterruptedException {
     throw new UnsupportedOperationException();
@@ -3686,15 +3669,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
-  public <T extends CoprocessorProtocol> T coprocessorProxy(Class<T> protocol) {
-    throw new UnsupportedOperationException();
-  }
-
-  /**
-   * Unsupported.
-   */
-  @Override
   public void snapshot(String snapshotName, String tableName) throws IOException,
       SnapshotCreationException, IllegalArgumentException {
     throw new UnsupportedOperationException();
@@ -3703,7 +3677,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void snapshot(byte[] snapshotName, byte[] tableName) throws IOException,
       SnapshotCreationException, IllegalArgumentException {
     throw new UnsupportedOperationException();
@@ -3712,7 +3685,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void snapshot(String snapshotName, String tableName, Type type) throws IOException,
       SnapshotCreationException, IllegalArgumentException {
     throw new UnsupportedOperationException();
@@ -3721,7 +3693,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void snapshot(SnapshotDescription snapshot) throws IOException, SnapshotCreationException,
       IllegalArgumentException {
     throw new UnsupportedOperationException();
@@ -3730,8 +3701,7 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
-  public long takeSnapshotAsync(SnapshotDescription snapshot) throws IOException,
+  public MasterProtos.SnapshotResponse takeSnapshotAsync(SnapshotDescription snapshot) throws IOException,
       SnapshotCreationException {
     throw new UnsupportedOperationException();
   }
@@ -3739,7 +3709,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public boolean isSnapshotFinished(SnapshotDescription snapshot) throws IOException,
       HBaseSnapshotException, UnknownSnapshotException {
     throw new UnsupportedOperationException();
@@ -3748,7 +3717,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void restoreSnapshot(byte[] snapshotName) throws IOException, RestoreSnapshotException {
     throw new UnsupportedOperationException();
   }
@@ -3756,7 +3724,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void restoreSnapshot(String snapshotName) throws IOException, RestoreSnapshotException {
     throw new UnsupportedOperationException();
   }
@@ -3764,7 +3731,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public List<SnapshotDescription> listSnapshots() throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3772,7 +3738,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void deleteSnapshot(byte[] snapshotName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3780,7 +3745,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void deleteSnapshot(String snapshotName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3788,7 +3752,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public Pair<Integer, Integer> getAlterStatus(byte[] tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3796,7 +3759,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void createTableAsync(HTableDescriptor desc, byte[][] splitKeys) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3804,7 +3766,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void assign(final byte[] regionName) throws MasterNotRunningException,
       ZooKeeperConnectionException, IOException {
     throw new UnsupportedOperationException();
@@ -3813,7 +3774,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public boolean balancer() throws MasterNotRunningException, ZooKeeperConnectionException {
     throw new UnsupportedOperationException();
   }
@@ -3821,7 +3781,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void split(final String tableNameOrRegionName) throws IOException, InterruptedException {
     throw new UnsupportedOperationException();
   }
@@ -3836,7 +3795,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void split(final String tableNameOrRegionName, final String splitPoint)
       throws IOException, InterruptedException {
     throw new UnsupportedOperationException();
@@ -3845,7 +3803,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void split(final byte[] tableNameOrRegionName, final byte[] splitPoint)
       throws IOException, InterruptedException {
     throw new UnsupportedOperationException();
@@ -3854,7 +3811,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public synchronized void shutdown() throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3862,7 +3818,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public synchronized void stopMaster() throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3870,7 +3825,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public synchronized void stopRegionServer(final String hostnamePort) {
     throw new UnsupportedOperationException();
   }
@@ -3878,16 +3832,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
-  public HMasterInterface getMaster() throws MasterNotRunningException,
-      ZooKeeperConnectionException {
-    throw new UnsupportedOperationException();
-  }
-
-  /**
-   * Unsupported.
-   */
-  @Override
   public HTableDescriptor[] deleteTables(Pattern pattern) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3895,7 +3839,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HTableDescriptor[] deleteTables(String regex) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3903,7 +3846,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void disableTableAsync(byte[] tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3911,7 +3853,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void disableTableAsync(String tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3919,7 +3860,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HTableDescriptor[] disableTables(Pattern pattern) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3927,7 +3867,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HTableDescriptor[] disableTables(String regex) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3935,7 +3874,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void enableTableAsync(byte[] tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3943,7 +3881,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public void enableTableAsync(String tableName) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3951,7 +3888,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HTableDescriptor[] enableTables(Pattern pattern) throws IOException {
     throw new UnsupportedOperationException();
   }
@@ -3959,7 +3895,6 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
   /**
    * Unsupported.
    */
-  @Override
   public HTableDescriptor[] enableTables(String regex) throws IOException {
     throw new UnsupportedOperationException();
   }

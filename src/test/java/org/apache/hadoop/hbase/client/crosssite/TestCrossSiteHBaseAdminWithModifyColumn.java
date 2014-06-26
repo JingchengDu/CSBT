@@ -26,6 +26,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -56,6 +57,8 @@ public class TestCrossSiteHBaseAdminWithModifyColumn {
     TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
     TEST_UTIL.getConfiguration().setBoolean(
         CrossSiteConstants.CROSS_SITE_TABLE_SCAN_IGNORE_UNAVAILABLE_CLUSTERS, true);
+    TEST_UTIL.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
 
     TEST_UTIL.startMiniCluster(1);
     TEST_UTIL.getConfiguration().setStrings(
@@ -63,10 +66,14 @@ public class TestCrossSiteHBaseAdminWithModifyColumn {
         "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+
     TEST_UTIL1.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL1.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
     TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -75,6 +82,9 @@ public class TestCrossSiteHBaseAdminWithModifyColumn {
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL2.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -108,11 +118,6 @@ public class TestCrossSiteHBaseAdminWithModifyColumn {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1").setScope(0));
     this.admin.createTable(desc);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
 
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(), tableName);
     Put p = new Put(Bytes.toBytes("hbase1,china"));
@@ -133,12 +138,7 @@ public class TestCrossSiteHBaseAdminWithModifyColumn {
     // Now modify the table with scope
     this.admin.modifyColumn(tableName, new HColumnDescriptor("col1").setScope(1));
     this.admin.enableTable(tableName);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-    
+
     // Now add puts
     crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(), tableName);
     p = new Put(Bytes.toBytes("hbase1,US"));

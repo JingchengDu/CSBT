@@ -52,9 +52,11 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
   public static void setUpBeforeClass() throws Exception {
     TEST_UTIL.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 1000);
     TEST_UTIL.getConfiguration().setBoolean(
         CrossSiteConstants.CROSS_SITE_TABLE_SCAN_IGNORE_UNAVAILABLE_CLUSTERS, true);
+    TEST_UTIL.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
 
     TEST_UTIL.startMiniCluster(1);
     TEST_UTIL.getConfiguration().setStrings(
@@ -65,7 +67,10 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
     TEST_UTIL1.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL1.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 1000);
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -74,6 +79,9 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL2.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -100,11 +108,6 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1").setScope(1));
     this.admin.createTable(desc);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
 
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(), tableName);
     Put p = new Put(Bytes.toBytes("hbase3,china"));
@@ -128,8 +131,8 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
       while (true) {
         s = new Scan();
         scanner = table.getScanner(s);
-        next = scanner.next();
-        if ((next != null)) {
+        Result[] results = scanner.next(2);
+        if ((results != null && results.length == 2)) {
           break;
         }
         Thread.sleep(500);
@@ -147,5 +150,4 @@ public class TestCrossSiteHTableWithAddPeersAndReplication {
     Assert.assertTrue(next != null);
     crossSiteHTable.close();
   }
-
 }

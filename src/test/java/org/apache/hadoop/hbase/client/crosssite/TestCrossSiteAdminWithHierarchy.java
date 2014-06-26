@@ -46,18 +46,24 @@ public class TestCrossSiteAdminWithHierarchy {
 
   @BeforeClass
   public static void setUpBeforeClass() throws Exception {
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL3.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL3.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL3.startMiniCluster(1);
     TEST_UTIL3.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -83,9 +89,7 @@ public class TestCrossSiteAdminWithHierarchy {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1"));
     admin.createTable(desc);
-    // HBaseAdmin only waits for regions to appear in META we should wait until
-    // they are assigned
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(admin.getConfiguration(), tableName);
     Assert.assertNotNull(crossSiteHTable);
     String HBASE1 = "hbase1";
@@ -93,10 +97,7 @@ public class TestCrossSiteAdminWithHierarchy {
     try {
       admin.addCluster(HBASE1, TEST_UTIL2.getClusterKey());
       admin.addCluster(HBASE2, TEST_UTIL3.getClusterKey());
-      TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-      TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL3, true);
-      // Just verify that it is not created in the base cluster
-      TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
       // Add hierarchy to it
       String[] hierarchy = new String[2];
       hierarchy[0] = "hbase2";

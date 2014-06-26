@@ -45,18 +45,24 @@ public class TestCrossSiteHBaseAdminWithPeers {
 
   @BeforeClass
   public static void setUpBeforeClass() throws Exception {
+    TEST_UTIL.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL.startMiniCluster(1);
     TEST_UTIL.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -86,20 +92,13 @@ public class TestCrossSiteHBaseAdminWithPeers {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1").setScope(1));
     this.admin.createTable(desc);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-    
+
     this.admin.disableTable(tableName);
     Assert.assertTrue(TEST_UTIL1.getHBaseAdmin().isTableDisabled(tableName+"_hbase1"));
     // enable the table and see if the table in the peer is also enabled
     this.admin.enableTable(tableName);
     Assert.assertTrue(TEST_UTIL1.getHBaseAdmin().isTableEnabled(tableName+"_hbase1"));
     this.admin.deletePeers("hbase1");
-    // Should not be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, false);
   }
 
 }

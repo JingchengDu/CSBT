@@ -20,17 +20,9 @@ package org.apache.hadoop.hbase.client.crosssite;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.io.InterruptedIOException;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.NavigableMap;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -41,32 +33,16 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.Message;
+import com.google.protobuf.Service;
+
+import com.google.protobuf.ServiceException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.HServerAddress;
-import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.client.Append;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.HConnection;
-import org.apache.hadoop.hbase.client.HTable;
-import org.apache.hadoop.hbase.client.HTableFactory;
-import org.apache.hadoop.hbase.client.HTableInterface;
-import org.apache.hadoop.hbase.client.HTableInterfaceFactory;
-import org.apache.hadoop.hbase.client.Increment;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.Row;
-import org.apache.hadoop.hbase.client.RowLock;
-import org.apache.hadoop.hbase.client.RowMutations;
-import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.*;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Call;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Callback;
@@ -80,7 +56,7 @@ import org.apache.hadoop.hbase.crosssite.TableAbnormalStateException;
 import org.apache.hadoop.hbase.crosssite.locator.ClusterLocator;
 import org.apache.hadoop.hbase.crosssite.locator.ClusterLocator.RowNotLocatableException;
 import org.apache.hadoop.hbase.crosssite.locator.PrefixClusterLocator;
-import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
+import org.apache.hadoop.hbase.ipc.CoprocessorRpcChannel;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Threads;
@@ -103,7 +79,7 @@ import org.apache.zookeeper.KeeperException;
  * 
  * @see CrossSiteHBaseAdmin for create, drop, list, enable and disable of tables.
  */
-public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface {
+public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterface{
   private static final Log LOG = LogFactory.getLog(CrossSiteHTable.class);
 
   protected volatile Configuration configuration;
@@ -143,6 +119,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
 
   public CrossSiteHTable(Configuration conf, final byte[] tableName, final ExecutorService pool,
       HTableInterfaceFactory hTableFactory) throws IOException {
+//    super();
     this.configuration = getCrossSiteConf(conf, conf.get(CrossSiteConstants.CROSS_SITE_ZOOKEEPER));
     this.tableName = tableName;
     if (pool != null) {
@@ -160,16 +137,11 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
-  @Override
-  public ExecutorService getPool() {
-    return pool;
-  }
-
   /**
    * Gets the configuration with the given cluster key.
    * 
    * @param conf
-   * @param address
+   * @param clusterKey
    * @return
    * @throws IOException
    */
@@ -260,6 +232,11 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     return this.tableName;
   }
 
+  @Override
+  public TableName getName() {
+    return TableName.valueOf(tableName);
+  }
+
   /**
    * {@inheritDoc}
    */
@@ -268,10 +245,6 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     return this.configuration;
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public void setScannerCaching(int scannerCaching) {
     this.scannerCaching = scannerCaching;
   }
@@ -320,6 +293,49 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
         throw e;
       }
     }
+  }
+
+  @Override
+  public Boolean[] exists(final List<Get> gets) throws IOException {
+    if (gets.isEmpty()) return new Boolean[]{};
+    if (gets.size() == 1) return new Boolean[] {exists(gets.get(0))};
+    Boolean[] results = new Boolean[gets.size()];
+    int i = 0;
+    for(Get g: gets){
+      CachedZookeeperInfo cachedZKInfo = this.cachedZKInfo;
+      String clusterName = cachedZKInfo.clusterLocator.getClusterName(g.getRow());
+      try {
+         results[i] = getClusterHTable(clusterName).exists(g);
+      } catch (IOException e) {
+              // need clear the cached HTable if the connection is refused
+        clearCachedTable(clusterName);
+        LOG.warn("Fail to connect to the cluster " + clusterName, e);
+        // Not do the failover for all IOException, only for the exceptions related with the connect
+        // issue.
+        if (failover && CrossSiteUtil.isFailoverException(e)) {
+          LOG.warn("Failover: redirect the get request to the peers. Please notice, the data may be stale.");
+          HTableInterface table = findAvailablePeer(cachedZKInfo.clusterInfos, clusterName);
+          if (table == null) {
+            LOG.error("Fail to find the peers", e);
+            throw e;
+          } else {
+            try {
+              results[i] = table.exists(g);
+            } finally {
+              try {
+                table.close();
+              } catch (IOException e1) {
+                LOG.warn("Fail to close the peer HTable", e1);
+              }
+            }
+          }
+        } else {
+          throw e;
+        }
+      }
+      i++;
+    }
+    return results;
   }
 
   /**
@@ -409,6 +425,20 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     Object[] results = new Object[actions.size()];
     batch(actions, results);
     return results;
+  }
+
+  @Override
+  public <R> void batchCallback(final List<? extends Row> actions,
+      final Object[] results, final Callback<R> callback)
+      throws IOException, InterruptedException {
+    throw new UnsupportedOperationException();
+  }
+
+
+  @Override
+  public <R> Object[] batchCallback(List<? extends Row> actions, Callback<R> callback)
+      throws IOException, InterruptedException {
+    throw new UnsupportedOperationException();
   }
 
   /**
@@ -635,16 +665,23 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public void put(Put put) throws IOException {
+  public void put(Put put)
+      throws InterruptedIOException, RetriesExhaustedWithDetailsException {
     validatePut(put);
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
-    String clusterName = clusterLocator.getClusterName(put.getRow());
+    String clusterName = null;
+    try {
+      clusterName = clusterLocator.getClusterName(put.getRow());
+    } catch (IOException e) {
+      LOG.error("Fail to get cluster name", e);
+    }
+
     try {
       getClusterHTable(clusterName).put(put);
     } catch (IOException e) {
       // need clear the cached HTable if the connection is refused
       clearCachedTable(clusterName);
-      throw e;
+      throw (InterruptedIOException)e;
     }
   }
 
@@ -652,12 +689,19 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public void put(List<Put> puts) throws IOException {
+  public void put(List<Put> puts)
+      throws InterruptedIOException, RetriesExhaustedWithDetailsException {
     Map<String, List<Put>> tableMap = new HashMap<String, List<Put>>();
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
     for (Put put : puts) {
       validatePut(put);
-      String clusterName = clusterLocator.getClusterName(put.getRow());
+      String clusterName = null;
+      try {
+        clusterName = clusterLocator.getClusterName(put.getRow());
+      }
+      catch (IOException e) {
+        LOG.error("Fail to get cluster name", e);
+      }
       List<Put> ps = tableMap.get(clusterName);
       if (ps == null) {
         ps = new ArrayList<Put>();
@@ -693,7 +737,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
       }
     }
     if (hasError) {
-      throw new IOException();
+      throw new InterruptedIOException();
     }
   }
 
@@ -879,6 +923,12 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
+  @Override
+  public long incrementColumnValue(final byte[] row, final byte[] family,
+      final byte[] qualifier, final long amount, final Durability durability) {
+        throw new UnsupportedOperationException();
+  }
+
   /**
    * {@inheritDoc}
    */
@@ -891,14 +941,14 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public void flushCommits() throws IOException {
+  public void flushCommits() throws InterruptedIOException, RetriesExhaustedWithDetailsException {
     for (Entry<String, HTableInterface> entry : tablesCache.entrySet()) {
       if (entry.getValue() != null) {
         try {
           entry.getValue().flushCommits();
         } catch (IOException e) {
           clearCachedTable(entry.getKey());
-          throw e;
+          throw (InterruptedIOException)e;
         }
       }
     }
@@ -931,43 +981,8 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     this.closed = true;
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
-  public RowLock lockRow(byte[] row) throws IOException {
-    ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
-    String clusterName = clusterLocator.getClusterName(row);
-    try {
-      return getClusterHTable(clusterName).lockRow(row);
-    } catch (IOException e) {
-      // need clear the cached HTable if the connection is refused
-      clearCachedTable(clusterName);
-      throw e;
-    }
-  }
-
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public void unlockRow(RowLock rl) throws IOException {
-    ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
-    String clusterName = clusterLocator.getClusterName(rl.getRow());
-    try {
-      getClusterHTable(clusterName).unlockRow(rl);
-    } catch (IOException e) {
-      // need clear the cached HTable if the connection is refused
-      clearCachedTable(clusterName);
-      throw e;
-    }
-  }
-
-  /**
-   * Not supported.
-   */
-  @Override
-  public <T extends CoprocessorProtocol> T coprocessorProxy(Class<T> protocol, byte[] row) {
+  public CoprocessorRpcChannel coprocessorService(byte[] row) {
     throw new UnsupportedOperationException();
   }
 
@@ -975,11 +990,11 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public <T extends CoprocessorProtocol, R> Map<byte[], R> coprocessorExec(Class<T> protocol,
+  public <T extends Service, R> Map<byte[], R> coprocessorService(Class<T> protocol,
       byte[] startKey, byte[] endKey, Call<T, R> callable) throws IOException, Throwable {
     final Map<byte[], R> results = Collections.synchronizedMap(new TreeMap<byte[], R>(
         Bytes.BYTES_COMPARATOR));
-    coprocessorExec(protocol, startKey, endKey, callable, new Batch.Callback<R>() {
+    coprocessorService(protocol, startKey, endKey, callable, new Batch.Callback<R>() {
       public void update(byte[] region, byte[] row, R value) {
         results.put(region, value);
       }
@@ -991,12 +1006,12 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public <T extends CoprocessorProtocol, R> Map<byte[], R> coprocessorExec(Class<T> protocol,
+  public <T extends Service, R> Map<byte[], R> coprocessorService(Class<T> protocol,
       byte[] startKey, byte[] endKey, String[] clusterNames, Call<T, R> callable)
       throws IOException, Throwable {
     final Map<byte[], R> results = Collections.synchronizedMap(new TreeMap<byte[], R>(
         Bytes.BYTES_COMPARATOR));
-    coprocessorExec(protocol, startKey, endKey, clusterNames, callable, new Batch.Callback<R>() {
+    coprocessorService(protocol, startKey, endKey, clusterNames, callable, new Batch.Callback<R>() {
       public void update(byte[] region, byte[] row, R value) {
         results.put(region, value);
       }
@@ -1008,17 +1023,17 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
    * {@inheritDoc}
    */
   @Override
-  public <T extends CoprocessorProtocol, R> void coprocessorExec(final Class<T> protocol,
+  public <T extends Service, R> void coprocessorService(final Class<T> protocol,
       final byte[] startKey, final byte[] endKey, final Call<T, R> callable,
       final Callback<R> callback) throws IOException, Throwable {
-    coprocessorExec(protocol, startKey, endKey, null, callable, callback);
+    coprocessorService(protocol, startKey, endKey, null, callable, callback);
   }
 
   /**
    * {@inheritDoc}
    */
   @Override
-  public <T extends CoprocessorProtocol, R> void coprocessorExec(final Class<T> protocol,
+  public <T extends Service, R> void coprocessorService(final Class<T> protocol,
       final byte[] startKey, final byte[] endKey, final String[] clusterNames,
       final Call<T, R> callable, final Callback<R> callback) throws IOException, Throwable {
     List<Pair<ClusterInfo, Pair<byte[], byte[]>>> cis = getClusterInfoStartStopKeyPairs(startKey,
@@ -1031,7 +1046,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
           try {
             HTableInterface table = getClusterHTable(pair.getFirst().getName(), pair.getFirst()
                 .getAddress());
-            table.coprocessorExec(protocol, pair.getSecond().getFirst(), pair.getSecond()
+            table.coprocessorService(protocol, pair.getSecond().getFirst(), pair.getSecond()
                 .getSecond(), callable, callback);
           } catch (Throwable e) {
             throw new Exception(e);
@@ -1052,12 +1067,32 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
+    @Override
+    public <R extends Message> Map<byte[], R> batchCoprocessorService(
+        Descriptors.MethodDescriptor methodDescriptor, Message request,
+        byte[] startKey, byte[] endKey, R responsePrototype) throws ServiceException, Throwable {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public <R extends Message> void batchCoprocessorService(
+        Descriptors.MethodDescriptor methodDescriptor, Message request,
+        byte[] startKey, byte[] endKey, R responsePrototype, Callback<R> callback)
+        throws ServiceException, Throwable {
+      throw new UnsupportedOperationException();
+    }
+
   /**
    * {@inheritDoc}
    */
   @Override
   public void setAutoFlush(boolean autoFlush) {
     this.autoFlush = autoFlush;
+  }
+
+  @Override
+  public void setAutoFlushTo(boolean autoFlush) {
+    setAutoFlush(autoFlush, clearBufferOnFail);
   }
 
   /**
@@ -1092,26 +1127,10 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public int getScannerCaching() {
     return scannerCaching;
   }
 
-  /**
-   * {@inheritDoc} Not supported.
-   */
-  @Override
-  public void prewarmRegionCache(Map<HRegionInfo, HServerAddress> regionMap) {
-    throw new UnsupportedOperationException();
-  }
-
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public void setOperationTimeout(int operationTimeout) {
     this.operationTimeout = operationTimeout;
     for (HTableInterface table : tablesCache.values()) {
@@ -1121,34 +1140,18 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public int getOperationTimeout() {
     return this.operationTimeout;
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public HRegionLocation getRegionLocation(String row) throws IOException {
     return this.getRegionLocation(Bytes.toBytes(row));
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public HRegionLocation getRegionLocation(byte[] row) throws IOException {
     return this.getRegionLocation(row, false);
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public HRegionLocation getRegionLocation(byte[] row, boolean reload) throws IOException {
     ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
     String clusterName = clusterLocator.getClusterName(row);
@@ -1166,53 +1169,36 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
   public HConnection getConnection() {
     throw new UnsupportedOperationException();
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
   public byte[][] getStartKeys() throws IOException {
     throw new UnsupportedOperationException();
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
   public byte[][] getEndKeys() throws IOException {
     throw new UnsupportedOperationException();
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
   public Pair<byte[][], byte[][]> getStartEndKeys() throws IOException {
     throw new UnsupportedOperationException();
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public Map<HRegionInfo, HServerAddress> getRegionsInfo() throws IOException {
-    // @deprecated Use {@link #getRegionLocations()} or {@link #getStartEndKeys()}
-    throw new UnsupportedOperationException();
-  }
-
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public NavigableMap<HRegionInfo, ServerName> getRegionLocations() throws IOException {
     List<ClusterInfo> cis = getClusterInfos(null, null);
-    List<Future<NavigableMap<HRegionInfo, ServerName>>> futures = 
+    List<Future<NavigableMap<HRegionInfo, ServerName>>> futures =
         new ArrayList<Future<NavigableMap<HRegionInfo, ServerName>>>();
     for (final ClusterInfo ci : cis) {
       futures.add(pool.submit(new Callable<NavigableMap<HRegionInfo, ServerName>>() {
@@ -1262,18 +1248,10 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     }
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public List<HRegionLocation> getRegionsInRange(byte[] startKey, byte[] endKey) throws IOException {
     return this.getRegionsInRange(startKey, endKey, false);
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
   public List<HRegionLocation> getRegionsInRange(final byte[] startKey, final byte[] endKey,
       final boolean reload) throws IOException {
     List<ClusterInfo> cis = getClusterInfos(startKey, endKey);
@@ -1329,17 +1307,15 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
-  public ArrayList<Put> getWriteBuffer() {
+  public List<Row> getWriteBuffer() {
     throw new UnsupportedOperationException();
   }
 
   /**
-   * {@inheritDoc} Not supported.
+   * Not supported.
    */
-  @Override
   public void clearRegionCache() {
     throw new UnsupportedOperationException();
   }
@@ -1389,8 +1365,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     HTableInterface table = null;
     try {
       table = this.hTableFactory.createHTableInterface(clusterConf,
-          Bytes.toBytes(CrossSiteUtil.getClusterTableName(tableNameAsString, clusterName)),
-          this.pool);
+          Bytes.toBytes(CrossSiteUtil.getClusterTableName(tableNameAsString, clusterName)));
     } catch (RuntimeException e) {
       if (e.getCause() instanceof IOException) {
         throw (IOException) e.getCause();
@@ -1416,7 +1391,7 @@ public class CrossSiteHTable extends HTable implements CrossSiteHTableInterface 
     return table;
   }
 
-  private void validatePut(final Put put) throws IllegalArgumentException {
+  public void validatePut(final Put put) throws IllegalArgumentException {
     if (put.isEmpty()) {
       throw new IllegalArgumentException("No columns to insert");
     }

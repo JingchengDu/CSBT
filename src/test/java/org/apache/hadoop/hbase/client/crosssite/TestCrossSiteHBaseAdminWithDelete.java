@@ -48,10 +48,11 @@ public class TestCrossSiteHBaseAdminWithDelete {
   public static void setUpBeforeClass() throws Exception {
     TEST_UTIL.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
     TEST_UTIL.getConfiguration().setBoolean(
         CrossSiteConstants.CROSS_SITE_TABLE_SCAN_IGNORE_UNAVAILABLE_CLUSTERS, true);
-
+    TEST_UTIL.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL.startMiniCluster(1);
     TEST_UTIL.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -61,7 +62,9 @@ public class TestCrossSiteHBaseAdminWithDelete {
     TEST_UTIL1.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL1.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -70,6 +73,8 @@ public class TestCrossSiteHBaseAdminWithDelete {
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL2.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -94,27 +99,27 @@ public class TestCrossSiteHBaseAdminWithDelete {
   }
 
   @Test
+  public void runTests() throws Exception{
+    testDeleteClusterWithExistingTables();
+    testDeletePeers();
+  }
+
   public void testDeleteClusterWithExistingTables() throws Exception {
-    String tableName = "testAddClusterWithExistingTables";
-    HTableDescriptor desc = new HTableDescriptor("testAddClusterWithExistingTables");
+    String tableName = "testDeleteClusterWithExistingTables";
+    HTableDescriptor desc = new HTableDescriptor("testDeleteClusterWithExistingTables");
     desc.addFamily(new HColumnDescriptor("col1"));
     this.admin.createTable(desc);
-    // HBaseAdmin only waits for regions to appear in META we should wait until
-    // they are assigned
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
+
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(), tableName);
     Assert.assertNotNull(crossSiteHTable);
     String HBASE1 = "hbase1";
     this.admin.addCluster(HBASE1, TEST_UTIL1.getClusterKey());
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
+
     this.admin.deleteCluster(HBASE1);
     ClusterInfo[] infos = this.admin.listClusters();
     Assert.assertTrue(infos.length == 0);
   }
 
-  @Test
   public void testDeletePeers() throws Exception {
     String HBASE2 = "hbase2";
     Pair<String, String> peer = new Pair<String, String>("peerhbase2", TEST_UTIL2.getClusterKey());
@@ -124,11 +129,6 @@ public class TestCrossSiteHBaseAdminWithDelete {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1").setScope(1));
     this.admin.createTable(desc);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
 
     this.admin.deletePeers(HBASE2);
     ClusterInfo[] infos = this.admin.listClusters();

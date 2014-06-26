@@ -53,33 +53,43 @@ public class TestCrossSiteHBaseTable {
   public static void setUpBeforeClass() throws Exception {
     TEST_UTIL.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
     TEST_UTIL.getConfiguration().setBoolean(
         CrossSiteConstants.CROSS_SITE_TABLE_SCAN_IGNORE_UNAVAILABLE_CLUSTERS, true);
+    TEST_UTIL.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
 
     TEST_UTIL.startMiniCluster(1);
-    TEST_UTIL.getConfiguration().setStrings(
-        "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
-            + ":/hbase");
+    TEST_UTIL.getConfiguration().set(
+            CrossSiteConstants.CROSS_SITE_ZOOKEEPER,
+            "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+                + ":/hbase");
 
     TEST_UTIL1.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL1.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
-    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 100);
+    TEST_UTIL1.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL1.startMiniCluster(1);
-    TEST_UTIL1.getConfiguration().setStrings(
-        "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
-            + ":/hbase");
+    TEST_UTIL1.getConfiguration().set(
+            CrossSiteConstants.CROSS_SITE_ZOOKEEPER,
+            "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+                + ":/hbase");
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
     TEST_UTIL2.getConfiguration().setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
+    TEST_UTIL2.getConfiguration().setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, 1);
+    TEST_UTIL2.getConfiguration().setInt(HConstants.HBASE_RPC_TIMEOUT_KEY, 2000);
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
+
     TEST_UTIL2.startMiniCluster(1);
-    TEST_UTIL2.getConfiguration().setStrings(
-        "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
-            + ":/hbase");
+    TEST_UTIL2.getConfiguration().set(
+            CrossSiteConstants.CROSS_SITE_ZOOKEEPER,
+            "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+                + ":/hbase");
   }
 
   @AfterClass
@@ -91,6 +101,10 @@ public class TestCrossSiteHBaseTable {
 
   @Before
   public void setUp() throws Exception {
+	String connectionString = TEST_UTIL.getConfiguration().get(CrossSiteConstants.CROSS_SITE_ZOOKEEPER);
+	String port0 = TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT);
+	String port1 = TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT);
+	String port2 = TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT);
     this.admin = new CrossSiteHBaseAdmin(TEST_UTIL.getConfiguration());
   }
 
@@ -104,11 +118,6 @@ public class TestCrossSiteHBaseTable {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1").setScope(1));
     this.admin.createTable(desc);
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, true);
-    // Just verify that it is not created in the base cluster
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL, false);
-    // Should be available in test util_2 also
-    TestCrossSiteHBaseAdmin.waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
 
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(), tableName);
     Put p = new Put(Bytes.toBytes("hbase1,china"));
@@ -123,29 +132,12 @@ public class TestCrossSiteHBaseTable {
     Result result = crossSiteHTable.get(get);
     byte[] value = result.getValue(Bytes.toBytes("col1"), Bytes.toBytes("q2"));
     Assert.assertTrue(Bytes.equals(value, Bytes.toBytes("100")));
-    
-    TEST_UTIL1.shutdownMiniCluster();
-    //Thread.sleep(3000);
-    result = crossSiteHTable.get(get);
-    value = result.getValue(Bytes.toBytes("col1"), Bytes.toBytes("q2"));
-    Assert.assertTrue(Bytes.equals(value, Bytes.toBytes("100")));
-    
-    Scan s = new Scan();
-    s.setCaching(1);
-    ResultScanner scanner = crossSiteHTable.getScanner(s);
-    Result next = scanner.next();
-    Assert.assertTrue(next != null);
-    TEST_UTIL1.shutdownMiniCluster();
-    Thread.sleep(6*1000);
-    next = scanner.next();
-    Assert.assertTrue(next != null);
-    next = scanner.next();
-    Assert.assertNull(next);
+
     HTable table = new HTable(TEST_UTIL2.getConfiguration(), Bytes.toBytes(tableName + "_hbase1"));
     try {
       while (true) {
-        s = new Scan();
-        scanner = table.getScanner(s);
+        Scan s = new Scan();
+        ResultScanner scanner = table.getScanner(s);
         Result[] results = scanner.next(2);
         if ((results != null && results.length == 2)) {
           break;
@@ -156,11 +148,14 @@ public class TestCrossSiteHBaseTable {
       table.close();
     }
     TEST_UTIL1.shutdownMiniCluster();
-    Thread.sleep(6*1000);
-    // Still the read should be served from the Peer
-    s = new Scan();
-    scanner = crossSiteHTable.getScanner(s);
-    next = scanner.next();
+    result = crossSiteHTable.get(get);
+    value = result.getValue(Bytes.toBytes("col1"), Bytes.toBytes("q2"));
+    Assert.assertTrue(Bytes.equals(value, Bytes.toBytes("100")));
+
+    Scan s = new Scan();
+    s.setCaching(1);
+    ResultScanner scanner = crossSiteHTable.getScanner(s);
+    Result next = scanner.next();
     Assert.assertTrue(next != null);
     next = scanner.next();
     Assert.assertTrue(next != null);

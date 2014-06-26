@@ -20,12 +20,13 @@ package org.apache.hadoop.hbase.client.crosssite;
 import java.io.IOException;
 import java.util.Map;
 
+import com.google.protobuf.Service;
+
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Call;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Callback;
-import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 
 /**
  * Used to communicate with a single Cross site HBase table.
@@ -60,7 +61,7 @@ public interface CrossSiteHTableInterface extends HTableInterface {
    * @throws IOException
    * @throws Throwable
    */
-  public <T extends CoprocessorProtocol, R> Map<byte[], R> coprocessorExec(Class<T> protocol,
+  public <T extends Service, R> Map<byte[], R> coprocessorService(Class<T> protocol,
       byte[] startKey, byte[] endKey, String[] clusterNames, Call<T, R> callable)
       throws IOException, Throwable;
 
@@ -79,7 +80,7 @@ public interface CrossSiteHTableInterface extends HTableInterface {
    * @throws IOException
    * @throws Throwable
    */
-  public <T extends CoprocessorProtocol, R> void coprocessorExec(final Class<T> protocol,
+  public <T extends Service, R> void coprocessorService(final Class<T> protocol,
       final byte[] startKey, final byte[] endKey, final String[] clusterNames,
       final Call<T, R> callable, final Callback<R> callback) throws IOException, Throwable;
 }

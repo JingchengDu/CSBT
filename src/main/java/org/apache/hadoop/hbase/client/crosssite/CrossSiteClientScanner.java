@@ -17,6 +17,20 @@
  */
 package org.apache.hadoop.hbase.client.crosssite;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.crosssite.ClusterInfo;
+import org.apache.hadoop.hbase.crosssite.CrossSiteConstants;
+import org.apache.hadoop.hbase.crosssite.CrossSiteUtil;
+import org.apache.hadoop.hbase.crosssite.CrossSiteZNodes;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.MergeSortIterator;
+import org.apache.hadoop.hbase.util.Pair;
+import org.apache.hadoop.hbase.zookeeper.ZKUtil;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,23 +40,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.client.HTableInterface;
-import org.apache.hadoop.hbase.client.HTableInterfaceFactory;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.crosssite.ClusterInfo;
-import org.apache.hadoop.hbase.crosssite.CrossSiteConstants;
-import org.apache.hadoop.hbase.crosssite.CrossSiteUtil;
-import org.apache.hadoop.hbase.crosssite.CrossSiteZNodes;
-import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.MergeSortIterator;
-import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 
 /**
  * Implements the scanner interface for partition table. This scanner will iterate all partition
@@ -133,12 +130,16 @@ class CrossSiteClientScanner implements ResultScanner {
         }
         String clusterTableName = CrossSiteUtil.getClusterTableName(tableName,
             clusterStartStopKeyPair.getFirst().getName());
-        HTableInterface table = null;
+        ScannerIterator scanIterator = null;
         try {
           try {
-            table = hTableFactory.createHTableInterface(
+            HTableInterface table = hTableFactory.createHTableInterface(
                 getClusterConf(configuration, clusterStartStopKeyPair.getFirst().getAddress()),
                 Bytes.toBytes(clusterTableName));
+            Scan s = new Scan(scan);
+            s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
+            s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
+            scanIterator = new ScannerIterator(table, s);
           } catch (RuntimeException e) {
             if (e.getCause() instanceof IOException) {
               throw (IOException) e.getCause();
@@ -166,8 +167,12 @@ class CrossSiteClientScanner implements ResultScanner {
                 String peerClusterTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
                     clusterStartStopKeyPair.getFirst().getName(), peerCluster.getName());
                 try {
-                  table = hTableFactory.createHTableInterface(conf,
+                  HTableInterface table = hTableFactory.createHTableInterface(conf,
                       Bytes.toBytes(peerClusterTableName));
+                  Scan s = new Scan(scan);
+                  s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
+                  s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
+                  scanIterator = new ScannerIterator(table, s);
                 } catch (RuntimeException re) {
                   if (re.getCause() instanceof IOException) {
                     throw (IOException) re.getCause();
@@ -196,7 +201,7 @@ class CrossSiteClientScanner implements ResultScanner {
           }
         }
 
-        if (table == null) {
+        if (scanIterator == null) {
           if (!ignore) {
             throw new IOException("Failed to initialize CSBTable '" + tableName
                 + "' in main and peer clusters");
@@ -206,10 +211,7 @@ class CrossSiteClientScanner implements ResultScanner {
             return null;
           }
         }
-        Scan s = new Scan(scan);
-        s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
-        s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
-        return new ScannerIterator(table, s);
+        return scanIterator;
       }
     };
   }

@@ -32,7 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.apache.hadoop.hbase.master.AssignmentManager.RegionState;
+import org.apache.hadoop.hbase.master.RegionState;
 
 /**
  * The cluster status of a cross site table.
@@ -273,8 +273,8 @@ public class CrossSiteClusterStatus extends ClusterStatus {
    * {@inheritDoc}
    */
   @Override
-  public HServerLoad getLoad(ServerName sn) {
-    HServerLoad load = null;
+  public ServerLoad getLoad(ServerName sn) {
+    ServerLoad load = null;
     for (ClusterStatus cs : status) {
       load = cs.getLoad(sn);
       if (load != null) {

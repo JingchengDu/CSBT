@@ -32,12 +32,8 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
-import org.apache.hadoop.hbase.client.HTable;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.Writables;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -56,18 +52,24 @@ public class TestCrossSiteHBaseAdmin {
 
   @BeforeClass
   public static void setUpBeforeClass() throws Exception {
+    TEST_UTIL1.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL1.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL2.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL2.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
+    TEST_UTIL3.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL3.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
     TEST_UTIL3.startMiniCluster(1);
     TEST_UTIL3.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
@@ -95,9 +97,7 @@ public class TestCrossSiteHBaseAdmin {
     desc.addFamily(new HColumnDescriptor("col1"));
 
     admin.createTable(desc);
-    // HBaseAdmin only waits for regions to appear in META we should wait until
-    // they are assigned
-    waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(admin.getConfiguration(), tableName);
     Assert.assertNotNull(crossSiteHTable);
   }
@@ -108,17 +108,13 @@ public class TestCrossSiteHBaseAdmin {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1"));
     admin.createTable(desc);
-    // HBaseAdmin only waits for regions to appear in META we should wait until
-    // they are assigned
-    waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(admin.getConfiguration(), tableName);
     Assert.assertNotNull(crossSiteHTable);
     String HBASE1 = "hbase1";
     try {
       admin.addCluster(HBASE1, TEST_UTIL2.getClusterKey());
-      waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-      // Just verify that it is not created in the base cluster
-      waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
       // Test disable and enable cluster in this
       admin.disableTable(tableName);
       admin.enableTable(tableName);
@@ -133,15 +129,11 @@ public class TestCrossSiteHBaseAdmin {
     String HBASE2 = "hbase2";
     try {
       admin.addCluster(HBASE2, TEST_UTIL2.getClusterKey());
-      waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
       HTableDescriptor desc = new HTableDescriptor("testCreateTableOnExistingCluster");
       desc.addFamily(new HColumnDescriptor("col1"));
       admin.createTable(desc);
-      // HBaseAdmin only waits for regions to appear in META we should wait until
-      // they are assigned
-      waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-      // Just verify that it is not created in the base cluster
-      waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
       CrossSiteHTable crossSiteHTable = new CrossSiteHTable(admin.getConfiguration(), tableName);
       Assert.assertNotNull(crossSiteHTable);
     } finally {
@@ -184,15 +176,11 @@ public class TestCrossSiteHBaseAdmin {
         new byte [] { 8, 8, 8 },
         new byte [] { 9, 9, 9 },
     };
-    waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
     HTableDescriptor desc = new HTableDescriptor(tableName);
     desc.addFamily(new HColumnDescriptor("col1"));
     admin.createTable(desc, splitKeys);
-    // HBaseAdmin only waits for regions to appear in META we should wait until
-    // they are assigned
-    waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL2, true);
-    // Just verify that it is not created in the base cluster
-    waitUntilAllRegionsAssigned(Bytes.toBytes(tableName), TEST_UTIL1, false);
+
     CrossSiteHTable crossSiteHTable = new CrossSiteHTable(admin.getConfiguration(), tableName);
     Assert.assertNotNull(crossSiteHTable);
     ensureThatTheSplitKeysAreDiff(TEST_UTIL2.getConfiguration(), TEST_UTIL3.getConfiguration(),
@@ -228,9 +216,9 @@ public class TestCrossSiteHBaseAdmin {
         while ((r = s.next()) != null) {
           Assert.assertTrue(r != null);
           byte[] b = r.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER);
-          HRegionInfo info = Writables.getHRegionInfoOrNull(b);
-          System.out.println(info.getTableNameAsString());
-          if (info.getTableNameAsString().startsWith(tableName)) {
+          HRegionInfo info = MetaScanner.getHRegionInfo(r);
+          System.out.println(info.getTable().getNameAsString());
+          if (info.getTable().getNameAsString().startsWith(tableName)) {
             regionInfos.add(info);
           }
         }
@@ -239,77 +227,6 @@ public class TestCrossSiteHBaseAdmin {
         s.close();
       }
 
-    } finally {
-      meta.close();
-    }
-  }
-
-  /**
-   * Wait until all regions for a table in .META. have a non-empty info:server,
-   * up to 60 seconds. This means all regions have been deployed, master has
-   * been informed and updated .META. with the regions deployed server.
-   * 
-   * @param tableName
-   *          the table name
-   * @throws IOException
-   */
-  public static void waitUntilAllRegionsAssigned(final byte[] tableName, HBaseTestingUtility util,
-      boolean findRows) throws IOException {
-    waitUntilAllRegionsAssigned(tableName, 60000, util, findRows);
-  }
-
-  /**
-   * Wait until all regions for a table in .META. have a non-empty info:server,
-   * or until timeout. This means all regions have been deployed, master has
-   * been informed and updated .META. with the regions deployed server.
-   * 
-   * @param tableName
-   *          the table name
-   * @param timeout
-   *          timeout, in milliseconds
-   * @throws IOException
-   */
-  public static void waitUntilAllRegionsAssigned(final byte[] tableName, final long timeout,
-      HBaseTestingUtility util, boolean findRows) throws IOException {
-    long deadline = System.currentTimeMillis() + timeout;
-    HTable meta = new HTable(util.getConfiguration(), HConstants.META_TABLE_NAME);
-    try {
-      while (true) {
-        boolean allRegionsAssigned = true;
-        Scan scan = new Scan();
-        scan.addFamily(HConstants.CATALOG_FAMILY);
-        ResultScanner s = meta.getScanner(scan);
-        if (!findRows) {
-          Assert.assertTrue(s.next() == null);
-        }
-        try {
-          Result r;
-          while ((r = s.next()) != null) {
-            Assert.assertTrue(r != null);
-            byte[] b = r.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER);
-            HRegionInfo info = Writables.getHRegionInfoOrNull(b);
-            if (info != null && Bytes.equals(info.getTableName(), tableName)) {
-              b = r.getValue(HConstants.CATALOG_FAMILY, HConstants.SERVER_QUALIFIER);
-              allRegionsAssigned &= (b != null);
-            }
-          }
-        } finally {
-          s.close();
-        }
-        if (allRegionsAssigned) {
-          return;
-        }
-        long now = System.currentTimeMillis();
-        if (now > deadline) {
-          throw new IOException("Timeout waiting for all regions of "
-              + Bytes.toStringBinary(tableName) + " to be assigned");
-        }
-        try {
-          Thread.sleep(deadline - now < 200 ? deadline - now : 200);
-        } catch (InterruptedException e) {
-          throw new IOException(e);
-        }
-      }
     } finally {
       meta.close();
     }
