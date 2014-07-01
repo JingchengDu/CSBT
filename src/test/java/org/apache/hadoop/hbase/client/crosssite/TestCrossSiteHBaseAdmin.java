@@ -32,8 +32,11 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
-import org.apache.hadoop.hbase.client.*;
-import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.MetaScanner;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
+import org.apache.hadoop.hbase.client.Scan;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -65,7 +68,7 @@ public class TestCrossSiteHBaseAdmin {
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
     TEST_UTIL3.getConfiguration().setInt("hbase.master.info.port", 0);
@@ -73,7 +76,7 @@ public class TestCrossSiteHBaseAdmin {
     TEST_UTIL3.startMiniCluster(1);
     TEST_UTIL3.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
   }
 

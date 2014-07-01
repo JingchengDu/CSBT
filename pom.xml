@@ -34,7 +34,8 @@
     <log4j.version>1.2.16</log4j.version>
     <mockito-all.version>1.8.5</mockito-all.version>
     <zookeeper.version>3.4.5</zookeeper.version>
-    
+    <protobuf.version>2.5.0</protobuf.version>
+
     <surefire.version>2.12-TRUNK-HBASE-2</surefire.version>
     <surefire.provider>surefire-junit47</surefire.provider>
 
@@ -52,7 +53,7 @@
     <test.output.tofile>true</test.output.tofile>
     <surefire.timeout>900</surefire.timeout>
   </properties>
-  
+
   <!-- Sorted by groups of dependencies then groupId and artifactId -->
   <dependencies>
     <dependency>
@@ -187,6 +188,11 @@
       <artifactId>commons-math</artifactId>
       <version>${commons-math.version}</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${protobuf.version}</version>
     </dependency>
   </dependencies>
 

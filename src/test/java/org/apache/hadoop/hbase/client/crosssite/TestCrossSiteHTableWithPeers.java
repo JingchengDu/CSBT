@@ -26,6 +26,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
+import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -40,6 +41,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
+@SuppressWarnings("deprecation")
 @Category(LargeTests.class)
 public class TestCrossSiteHTableWithPeers {
   final Log LOG = LogFactory.getLog(getClass());
@@ -74,7 +76,7 @@ public class TestCrossSiteHTableWithPeers {
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
@@ -85,7 +87,7 @@ public class TestCrossSiteHTableWithPeers {
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
   }
 
@@ -118,14 +120,23 @@ public class TestCrossSiteHTableWithPeers {
     crossSiteHTable.put(p);
 
     p = new Put(Bytes.toBytes("hbase2,india"));
-    p.add(Bytes.toBytes("col1"), Bytes.toBytes("q2"), Bytes.toBytes("100"));
+    p.add(Bytes.toBytes("col1"), Bytes.toBytes("q2"), Bytes.toBytes("101"));
     crossSiteHTable.put(p);
 
+    Get get = new Get(Bytes.toBytes("hbase2,india"));
+    Result result = crossSiteHTable.get(get);
+    byte[] value = result.getValue(Bytes.toBytes("col1"), Bytes.toBytes("q2"));
+    Assert.assertTrue(Bytes.equals(value, Bytes.toBytes("101")));
+
     Scan s = new Scan();
+    s.setCaching(1);
     ResultScanner scanner = crossSiteHTable.getScanner(s);
     Result next = scanner.next();
     Assert.assertTrue(next != null);
-    System.out.println(Bytes.toString(next.getRow()));
+    next = scanner.next();
+    Assert.assertTrue(next != null);
+    next = scanner.next();
+    Assert.assertNull(next);
     HTable table = new HTable(TEST_UTIL2.getConfiguration(), Bytes.toBytes(tableName + "_hbase2"));
     try {
       while (true) {
@@ -142,12 +153,17 @@ public class TestCrossSiteHTableWithPeers {
     }
     TEST_UTIL1.shutdownMiniCluster();
     // Still the read should be served from the Peer
-    // crossSiteHTable = new CrossSiteHTable(this.admin.getConfiguration(),
-    // tableName);
-    s = new Scan();
+    result = crossSiteHTable.get(get);
+    value = result.getValue(Bytes.toBytes("col1"), Bytes.toBytes("q2"));
+    Assert.assertTrue(Bytes.equals(value, Bytes.toBytes("101")));
+
     scanner = crossSiteHTable.getScanner(s);
     next = scanner.next();
     Assert.assertTrue(next != null);
+    next = scanner.next();
+    Assert.assertTrue(next != null);
+    next = scanner.next();
+    Assert.assertNull(next);
     crossSiteHTable.close();
   }
 

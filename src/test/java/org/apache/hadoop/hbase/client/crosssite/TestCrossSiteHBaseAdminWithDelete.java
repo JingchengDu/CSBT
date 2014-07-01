@@ -26,7 +26,6 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
 import org.apache.hadoop.hbase.crosssite.ClusterInfo;
 import org.apache.hadoop.hbase.crosssite.CrossSiteConstants;
-import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -68,7 +67,7 @@ public class TestCrossSiteHBaseAdminWithDelete {
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
@@ -78,7 +77,7 @@ public class TestCrossSiteHBaseAdminWithDelete {
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
   }
 

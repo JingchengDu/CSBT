@@ -59,7 +59,7 @@ public class TestCrossSiteAdminWithHierarchy {
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
     TEST_UTIL3.getConfiguration().setInt("hbase.master.info.port", 0);
@@ -67,7 +67,7 @@ public class TestCrossSiteAdminWithHierarchy {
     TEST_UTIL3.startMiniCluster(1);
     TEST_UTIL3.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL2.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
   }
 

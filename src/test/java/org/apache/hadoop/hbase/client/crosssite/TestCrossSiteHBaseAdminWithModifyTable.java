@@ -75,7 +75,7 @@ public class TestCrossSiteHBaseAdminWithModifyTable {
     TEST_UTIL1.startMiniCluster(1);
     TEST_UTIL1.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
 
     TEST_UTIL2.getConfiguration().setBoolean("hbase.crosssite.table.failover", true);
@@ -86,7 +86,7 @@ public class TestCrossSiteHBaseAdminWithModifyTable {
     TEST_UTIL2.startMiniCluster(1);
     TEST_UTIL2.getConfiguration().setStrings(
         "hbase.crosssite.global.zookeeper",
-        "localhost:" + TEST_UTIL1.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+        "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
   }
 
