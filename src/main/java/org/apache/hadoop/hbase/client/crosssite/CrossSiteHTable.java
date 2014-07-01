@@ -344,6 +344,21 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
   @Override
   public void batch(List<? extends Row> actions, Object[] results) throws IOException,
       InterruptedException {
+    batchCallback(actions, results, null);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Object[] batch(List<? extends Row> actions) throws IOException, InterruptedException {
+    return batchCallback(actions, null);
+  }
+
+  @Override
+  public <R> void batchCallback(final List<? extends Row> actions,
+      final Object[] results, final Callback<R> callback)
+      throws IOException, InterruptedException {
     if (results.length != actions.size()) {
       throw new IllegalArgumentException(
           "argument results must be the same size as argument actions");
@@ -384,7 +399,7 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
               indexes.add(rowEntry.getKey());
               rows.add(rowEntry.getValue());
             }
-            table.batch(rows, rs);
+            table.batchCallback(rows, rs, callback);
           } catch (IOException e) {
             // need clear the cached HTable if the connection is refused
             clearCachedTable(entry.getKey());
@@ -417,28 +432,12 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
     }
   }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public Object[] batch(List<? extends Row> actions) throws IOException, InterruptedException {
-    Object[] results = new Object[actions.size()];
-    batch(actions, results);
-    return results;
-  }
-
-  @Override
-  public <R> void batchCallback(final List<? extends Row> actions,
-      final Object[] results, final Callback<R> callback)
-      throws IOException, InterruptedException {
-    throw new UnsupportedOperationException();
-  }
-
-
   @Override
   public <R> Object[] batchCallback(List<? extends Row> actions, Callback<R> callback)
       throws IOException, InterruptedException {
-    throw new UnsupportedOperationException();
+    Object[] results = new Object[actions.size()];
+    batchCallback(actions, results, callback);
+    return results;
   }
 
   /**
@@ -907,6 +906,8 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
       npe = new NullPointerException("row is null");
     } else if (family == null) {
       npe = new NullPointerException("column is null");
+	} else if (qualifier == null) {
+      npe = new NullPointerException("qualifier is null");
     }
     if (npe != null) {
       throw new IOException("Invalid arguments to incrementColumnValue", npe);
@@ -925,8 +926,28 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
 
   @Override
   public long incrementColumnValue(final byte[] row, final byte[] family,
-      final byte[] qualifier, final long amount, final Durability durability) {
-        throw new UnsupportedOperationException();
+      final byte[] qualifier, final long amount, final Durability durability) throws IOException {
+    NullPointerException npe = null;
+    if (row == null) {
+      npe = new NullPointerException("row is null");
+    } else if (family == null) {
+      npe = new NullPointerException("column is null");
+    }  else if (qualifier == null) {
+      npe = new NullPointerException("qualifier is null");
+    }
+    if (npe != null) {
+      throw new IOException("Invalid arguments to incrementColumnValue", npe);
+    }
+    ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
+    String clusterName = clusterLocator.getClusterName(row);
+    try {
+      return getClusterHTable(clusterName).incrementColumnValue(row, family, qualifier, amount,
+          durability);
+    } catch (IOException e) {
+      // need clear the cached HTable if the connection is refused
+      clearCachedTable(clusterName);
+      throw e;
+    }
   }
 
   /**
@@ -983,7 +1004,21 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
 
   @Override
   public CoprocessorRpcChannel coprocessorService(byte[] row) {
-    throw new UnsupportedOperationException();
+    ClusterLocator clusterLocator = cachedZKInfo.clusterLocator;
+    String clusterName = null;
+    try {
+      clusterName = clusterLocator.getClusterName(row);
+    } catch (IOException e) {
+      LOG.error("Fail to get cluster name", e);
+    }
+
+    try {
+      return getClusterHTable(clusterName).coprocessorService(row);
+    } catch (IOException e) {
+      // need clear the cached HTable if the connection is refused
+      clearCachedTable(clusterName);
+      throw new RuntimeException(e);
+    }
   }
 
   /**
@@ -1055,6 +1090,7 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
         }
       }));
     }
+    boolean hasErrors = false;
     try {
       for (Entry<String, Future<Void>> result : futures.entrySet()) {
         result.getValue().get();
@@ -1062,8 +1098,11 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
     } catch (Exception e) {
       // do nothing. Even the exception occurs, we regard the cross site
       // HTable has been deleted
+      hasErrors = true;
       LOG.error("Fail to execute the coprocessor in the cross site table " + tableName, e);
-      throw new IOException(e);
+    }
+    if (hasErrors) {
+      throw new IOException();
     }
   }
 
@@ -1071,7 +1110,58 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
     public <R extends Message> Map<byte[], R> batchCoprocessorService(
         Descriptors.MethodDescriptor methodDescriptor, Message request,
         byte[] startKey, byte[] endKey, R responsePrototype) throws ServiceException, Throwable {
-      throw new UnsupportedOperationException();
+      final Map<byte[], R> results = Collections.synchronizedMap(new TreeMap<byte[], R>(
+          Bytes.BYTES_COMPARATOR));
+      batchCoprocessorService(methodDescriptor, request, startKey, endKey, responsePrototype,
+          new Callback<R>() {
+
+            @Override
+            public void update(byte[] region, byte[] row, R result) {
+              if (region != null) {
+                results.put(region, result);
+              }
+            }
+          });
+      return results;
+    }
+
+    public <R extends Message> void batchCoprocessorService(
+        final Descriptors.MethodDescriptor methodDescriptor, final Message request,
+        byte[] startKey, byte[] endKey, String[] clusterNames, final R responsePrototype, final Callback<R> callback)
+        throws ServiceException, Throwable {
+      List<Pair<ClusterInfo, Pair<byte[], byte[]>>> cis = getClusterInfoStartStopKeyPairs(startKey,
+          endKey, clusterNames);
+      Map<String, Future<Void>> futures = new HashMap<String, Future<Void>>();
+      for (final Pair<ClusterInfo, Pair<byte[], byte[]>> pair : cis) {
+        futures.put(pair.getFirst().getName(), pool.submit(new Callable<Void>() {
+          @Override
+          public Void call() throws Exception {
+            try {
+              HTableInterface table = getClusterHTable(pair.getFirst().getName(), pair.getFirst()
+                  .getAddress());
+              table.batchCoprocessorService(methodDescriptor, request, pair.getSecond().getFirst(), pair.getSecond()
+                  .getSecond(), responsePrototype, callback);
+            } catch (Throwable e) {
+              throw new Exception(e);
+            }
+            return null;
+          }
+        }));
+      }
+      boolean hasErrors = false;
+      try {
+        for (Entry<String, Future<Void>> result : futures.entrySet()) {
+          result.getValue().get();
+        }
+      } catch (Exception e) {
+        // do nothing. Even the exception occurs, we regard the cross site
+        // HTable has been deleted
+        hasErrors = true;
+        LOG.error("Fail to execute the coprocessor in the cross site table " + tableName, e);
+      }
+      if (hasErrors) {
+        throw new IOException();
+      }
     }
 
     @Override
@@ -1079,7 +1169,8 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
         Descriptors.MethodDescriptor methodDescriptor, Message request,
         byte[] startKey, byte[] endKey, R responsePrototype, Callback<R> callback)
         throws ServiceException, Throwable {
-      throw new UnsupportedOperationException();
+      this.batchCoprocessorService(methodDescriptor, request, startKey, endKey, null,
+        responsePrototype, callback);
     }
 
   /**
