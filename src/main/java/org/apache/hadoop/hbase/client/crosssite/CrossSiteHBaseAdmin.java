@@ -2439,10 +2439,10 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
                       } else {
                         String peerTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
                             clusterName, peer.getName());
-                        HBaseAdmin peerAdmin = createHBaseAmin(configuration, ci.getAddress());
+                        HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
                         try {
                           if (peerAdmin.tableExists(peerTableName)) {
-                            addColumn(configuration, clusterName, peer.getAddress(), tableName,
+                            addColumn(peerAdmin, clusterName, peer.getAddress(), tableName,
                                 peerHcd, true);
                           } else {
                             // create the table in the peer.
@@ -3018,6 +3018,39 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
     throw new RetriesExhaustedException("Not able to acquire table lock after " + tries + " tries");
   }
 
+  private static void addColumn(HBaseAdmin admin, String clusterName, String clusterAddress,
+      String tableName, HColumnDescriptor hcd, boolean peerCluster) throws IOException {
+    String clusterTableName = CrossSiteUtil.getClusterTableName(tableName, clusterName);
+    try {
+      if (peerCluster) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Disabling " + clusterTableName + " in peer cluster " + clusterName + " : "
+              + clusterAddress + " as part of adding column");
+        }
+        disableTable(admin, clusterTableName);
+      }
+      HTableDescriptor htd = admin.getTableDescriptor(Bytes.toBytes(clusterTableName));
+      if (htd.hasFamily(hcd.getName())) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("The column " + Bytes.toString(hcd.getName()) + " has been existent in table "
+              + clusterTableName);
+        }
+      } else {
+        admin.addColumn(Bytes.toBytes(clusterTableName), hcd);
+      }
+      if (peerCluster) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Enabling " + clusterTableName + " in peer cluster " + clusterName + " : "
+              + clusterAddress + " after adding column");
+        }
+        enableTable(admin, clusterTableName);
+      }
+    } catch (InvalidFamilyOperationException e) {
+      // Supress InvalidFamilyOperationException.
+      LOG.debug(e);
+    }
+  } 
+
   private static void addColumn(Configuration conf, String clusterName, String clusterAddress,
       String tableName, HColumnDescriptor hcd, boolean peerCluster) throws IOException {
     String clusterTableName = CrossSiteUtil.getClusterTableName(tableName, clusterName);
@@ -3133,18 +3166,55 @@ public class CrossSiteHBaseAdmin extends HBaseAdmin {
                       }
                     }
                     for (ClusterInfo peer : ci.getPeers()) {
-                      if (LOG.isDebugEnabled()) {
-                        LOG.debug("Creating the table " + clusterTableName + " to the peer "
-                            + peer.getAddress());
-                      }
                       String peerTableName = CrossSiteUtil.getPeerClusterTableName(
                           tableNameAsString, entry.getKey(), peer.getName());
+                      if (LOG.isDebugEnabled()) {
+                        LOG.debug("Creating the table " + peerTableName + " to the peer "
+                            + peer.getAddress());
+                      }
                       HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
                       try {
                         peerHtd.setName(Bytes.toBytes(peerTableName));
                         disableTable(peerAdmin, peerTableName);
                         peerAdmin.modifyTable(Bytes.toBytes(peerTableName), peerHtd);
                         enableTable(peerAdmin, peerTableName);
+                      } finally {
+                        try {
+                          peerAdmin.close();
+                        } catch (IOException e) {
+                          LOG.warn("Fail to close the HBaseAdmin of peers", e);
+                        }
+                      }
+                    }
+                  }
+                } else if (isReplicatedTable(newHtd)) {
+                  if (ci.getPeers() != null && !ci.getPeers().isEmpty()) {
+                    HTableDescriptor peerHtd = new HTableDescriptor(htd);
+                    for (HColumnDescriptor hcd : peerHtd.getColumnFamilies()) {
+                      if (hcd.getScope() > 0) {
+                        hcd.setScope(0);
+                      } else {
+                        peerHtd.removeFamily(hcd.getName());
+                      }
+                    }
+                    byte[][] splitKeys = getTableSplitsForCluster(tableNameAsString, entry.getKey());
+                    for (ClusterInfo peer : ci.getPeers()) {
+                      String peerTableName = CrossSiteUtil.getPeerClusterTableName(
+                          tableNameAsString, entry.getKey(), peer.getName());
+                      peerHtd.setName(Bytes.toBytes(peerTableName));
+                      HBaseAdmin peerAdmin = createHBaseAmin(configuration, peer.getAddress());
+                      try {
+                        if (!peerAdmin.tableExists(peerTableName)) {
+                          if (LOG.isDebugEnabled()) {
+                            LOG.debug("Creating table " + peerTableName + " in peer cluster "
+                                + peer + " as the modified table " + newHtd + " is replicatable");
+                          }
+                          peerAdmin.createTable(peerHtd, splitKeys);
+                        } else {
+                          disableTable(peerAdmin, peerTableName);
+                          peerAdmin.modifyTable(Bytes.toBytes(peerTableName), peerHtd);
+                          enableTable(peerAdmin, peerTableName);  
+                        }
                       } finally {
                         try {
                           peerAdmin.close();
