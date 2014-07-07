@@ -294,7 +294,7 @@ public class CrossSiteUtil {
    * @param e
    * @return
    */
-  public static boolean isFailoverException(Exception e) {
+  public static boolean isFailoverException(Throwable e) {
     if (!(e instanceof DoNotRetryIOException)) {
       return true;
     }
