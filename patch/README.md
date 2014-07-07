@@ -1,6 +1,6 @@
-This patch is needed to be applied if users want to run hbase shell.
+If users want to support the hbase shell in the CSBT, please apply this patch.
 
-**Note:** The patch is against HBase-0.98.2, so please make sure you checked out the hbase 0.98.2 version,
+**Note:** The patch is against Apache HBase 0.98.2.
 
 ```bash
 patch -p0 < csbt-shell.patch
