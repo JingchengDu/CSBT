@@ -143,8 +143,8 @@ class CrossSiteClientScanner implements ResultScanner {
             Scan s = new Scan(scan);
             s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
             s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
-            scanIterator = new ScannerIterator(clusterStartStopKeyPair.getFirst().getName(), table,
-                s);
+            scanIterator = new ScannerIterator(clusterStartStopKeyPair.getFirst(),
+                clusterStartStopKeyPair.getFirst(), table, s);
           } catch (RuntimeException e) {
             if (e.getCause() instanceof IOException) {
               throw (IOException) e.getCause();
@@ -181,7 +181,7 @@ class CrossSiteClientScanner implements ResultScanner {
                     s.setStartRow(clusterStartStopKeyPair.getSecond().getFirst());
                     s.setStopRow(clusterStartStopKeyPair.getSecond().getSecond());
                     scanIterator = new ScannerIterator(
-                        clusterStartStopKeyPair.getFirst().getName(), table, s);
+                        clusterStartStopKeyPair.getFirst(), peerCluster, table, s);
                   } catch (RuntimeException re) {
                     if (re.getCause() instanceof IOException) {
                       throw (IOException) re.getCause();
@@ -289,15 +289,18 @@ class CrossSiteClientScanner implements ResultScanner {
     private Result next = null;
     boolean closed = false;
     private Future<Result> future;
-    private String clusterName;
     private Result lastNotNullResult;
     private Scan internalScan;
+    private ClusterInfo currentCluster;
+    private ClusterInfo masterCluster;
 
     protected ScannerIterator() {
     }
 
-    protected ScannerIterator(String clusterName, HTableInterface table, Scan internalScan) throws IOException {
-      this.clusterName = clusterName;
+    protected ScannerIterator(ClusterInfo masterCluster, ClusterInfo currentCluster,
+        HTableInterface table, Scan internalScan) throws IOException {
+      this.masterCluster = masterCluster;
+      this.currentCluster = currentCluster;
       this.table = table;
       this.internalScan = internalScan;
       this.scanner = table.getScanner(internalScan);
@@ -327,9 +330,11 @@ class CrossSiteClientScanner implements ResultScanner {
           nextInternal();
           return next != null;
         } catch (Throwable t) {
-          LOG.info("Fail to connect to the CSBTable " + tableName + " in cluster " + clusterName, t);
+          LOG.info(
+              "Fail to connect to the CSBTable " + tableName + " in cluster "
+                  + masterCluster.getName(), t);
           if (failover && CrossSiteUtil.isFailoverException(t)) {
-            LOG.warn("Start to failover to the peers for cluster " + clusterName
+            LOG.warn("Start to failover to the peers for cluster " + masterCluster.getName()
                 + ". Please notice, the data may be stale.");
             this.scanner.close();
             try {
@@ -342,21 +347,30 @@ class CrossSiteClientScanner implements ResultScanner {
             // after a CrossSiteHTable instance has been created
             List<ClusterInfo> peerClusters = null;
             try {
-              peerClusters = znodes.getPeerClusters(clusterName);
+              peerClusters = znodes.getPeerClusters(masterCluster.getName());
             } catch (KeeperException ke) {
               LOG.warn("Fail to connect the global zookeeper", ke);
             }
-            if (peerClusters != null) {
-              for (ClusterInfo peerCluster : peerClusters) {
-                LOG.info("Starting to failover to the peer cluster" + peerCluster
-                    + " for the cluster " + clusterName);
+            if (peerClusters != null && !peerClusters.isEmpty()) {
+              List<ClusterInfo> allClusters = new ArrayList<ClusterInfo>();
+              allClusters.add(masterCluster);
+              allClusters.addAll(peerClusters);
+              int index = allClusters.indexOf(currentCluster);
+              if (index < 0) {
+                index = 0;
+              }
+              for (int i = index + 1; i < allClusters.size() + index; i++) {
+                ClusterInfo failoverClusterInfo = allClusters.get(i % allClusters.size());
+                LOG.info("Starting to failover to the peer cluster " + failoverClusterInfo
+                    + " for the cluster " + masterCluster.getName());
                 try {
-                  Configuration conf = getClusterConf(configuration, peerCluster.getAddress());
-                  String peerClusterTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
-                      clusterName, peerCluster.getName());
+                  Configuration conf = getClusterConf(configuration,
+                      failoverClusterInfo.getAddress());
+                  String failoverClusterTableName = CrossSiteUtil.getPeerClusterTableName(tableName,
+                      masterCluster.getName(), failoverClusterInfo.getName());
                   try {
                     table = hTableFactory.createHTableInterface(conf,
-                        Bytes.toBytes(peerClusterTableName));
+                        Bytes.toBytes(failoverClusterTableName));
                     Scan s = new Scan(internalScan);
                     if (lastNotNullResult != null) {
                       s.setStartRow(lastNotNullResult.getRow());
@@ -372,8 +386,9 @@ class CrossSiteClientScanner implements ResultScanner {
                       lastNotNullResult = next;
                       nextInternal();
                     }
-                    LOG.info("Failover to the cluster " + peerCluster
+                    LOG.info("Failover to the cluster " + failoverClusterInfo
                         + ". Please notice, the data may be stale.");
+                    currentCluster = failoverClusterInfo;
                     return next != null;
                   } catch (Throwable re) {
                     if (re.getCause() instanceof IOException) {
@@ -383,14 +398,14 @@ class CrossSiteClientScanner implements ResultScanner {
                     }
                   }
                 } catch (IOException ioe) {
-                  LOG.warn("Fail to connect to peer cluster '" + peerCluster
+                  LOG.warn("Fail to connect to peer cluster '" + failoverClusterInfo
                       + "'. Will try other peers", ioe);
                 }
               }
             }
           }
           if (ignoreUnavailableClusters) {
-            LOG.warn("The scanner for the cluster " + clusterName + " will be ignored");
+            LOG.warn("The scanner for the cluster " + masterCluster.getName() + " will be ignored");
             close();
             return false;
           }
