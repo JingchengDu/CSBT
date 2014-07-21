@@ -1,16 +1,16 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.apache.hbase</groupId>
+    <artifactId>csbt</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+  </parent>
   <groupId>org.apache.hbase</groupId>
-  <artifactId>csbt</artifactId>
+  <artifactId>csbt-server</artifactId>
   <version>0.0.1-SNAPSHOT</version>
-  <description>Cross-Site BigTable</description>
-  <name>CSBT</name>
-  <packaging>pom</packaging>
-  
-  <modules>
-    <module>csbt-server</module>
-    <module>csbt-client</module>
-  </modules>
+  <description>Cross-Site BigTable Server</description>
+  <name>csbt-server</name>
+  <packaging>jar</packaging>
   
   <properties>
     <maven.build.timestamp.format>
@@ -22,6 +22,25 @@
     <compileSource>1.6</compileSource>
 
     <!-- Dependencies -->
+    <avro.version>1.5.3</avro.version>
+    <commons-cli.version>1.2</commons-cli.version>
+    <commons-codec.version>1.4</commons-codec.version>
+    <commons-httpclient.version>3.1</commons-httpclient.version><!-- pretty outdated -->
+    <commons-io.version>2.1</commons-io.version>
+    <commons-lang.version>2.5</commons-lang.version>
+    <commons-logging.version>1.1.1</commons-logging.version>
+    <commons-math.version>2.1</commons-math.version>
+    <commons-configuration.version>1.6</commons-configuration.version>
+    <guava.version>11.0.2</guava.version>
+    <jackson.version>1.8.8</jackson.version>
+    <jruby.version>1.6.5</jruby.version>
+    <junit.version>4.11</junit.version>
+    <slf4j.version>1.4.3</slf4j.version>
+    <log4j.version>1.2.16</log4j.version>
+    <mockito-all.version>1.8.5</mockito-all.version>
+    <zookeeper.version>3.4.5</zookeeper.version>
+    <protobuf.version>2.5.0</protobuf.version>
+
     <surefire.version>2.12-TRUNK-HBASE-2</surefire.version>
     <surefire.provider>surefire-junit47</surefire.provider>
 
@@ -41,6 +60,14 @@
   </properties>
 
   <!-- Sorted by groups of dependencies then groupId and artifactId -->
+  <dependencies>
+    <dependency> 
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>csbt-client</artifactId>
+      <version>0.0.1-SNAPSHOT</version>
+
+	</dependency>
+  </dependencies>
 
   <build>
     <pluginManagement>
