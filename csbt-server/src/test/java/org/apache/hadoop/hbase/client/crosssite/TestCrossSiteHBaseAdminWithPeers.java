@@ -33,6 +33,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
+import com.google.protobuf.ServiceException;
+
 @Category(LargeTests.class)
 public class TestCrossSiteHBaseAdminWithPeers {
 
@@ -40,6 +42,7 @@ public class TestCrossSiteHBaseAdminWithPeers {
   private final static HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
   private final static HBaseTestingUtility TEST_UTIL1 = new HBaseTestingUtility();
   private final static HBaseTestingUtility TEST_UTIL2 = new HBaseTestingUtility();
+  private final static HBaseTestingUtility TEST_UTIL3 = new HBaseTestingUtility();
   private CrossSiteHBaseAdmin admin;
 
   @BeforeClass
@@ -67,6 +70,9 @@ public class TestCrossSiteHBaseAdminWithPeers {
         "hbase.crosssite.global.zookeeper",
         "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
             + ":/hbase");
+
+    TEST_UTIL3.getConfiguration().setInt("hbase.master.info.port", 0);
+    TEST_UTIL3.getConfiguration().setBoolean("hbase.regionserver.info.port.auto", true);
   }
 
   @AfterClass
@@ -100,4 +106,37 @@ public class TestCrossSiteHBaseAdminWithPeers {
     this.admin.deletePeers("hbase1");
   }
 
+  @Test
+  public void testFailAddPeer() throws Exception {
+	String HBASE2 = "hbase2";
+	this.admin.addCluster(HBASE2, TEST_UTIL2.getClusterKey());
+	Pair<String, String> peer = new Pair<String, String>("peerhbase2", TEST_UTIL3.getClusterKey());
+    try {
+      this.admin.addPeer(HBASE2, peer);
+    } catch (Exception e) {
+      Assert.assertTrue(e.toString().contains("Can't connect to ZooKeeper"));
+	}
+    TEST_UTIL3.startMiniCluster(1);
+    TEST_UTIL3.getConfiguration().setStrings(
+            "hbase.crosssite.global.zookeeper",
+            "localhost:" + TEST_UTIL.getConfiguration().get(HConstants.ZOOKEEPER_CLIENT_PORT)
+                + ":/hbase");
+    try {
+	  this.admin.addPeer(HBASE2, peer);
+    } catch (Exception e) {
+      LOG.warn(e);
+    }
+    String tableName = "testAddPeers1";
+    HTableDescriptor desc = new HTableDescriptor(tableName);
+    desc.addFamily(new HColumnDescriptor("col1").setScope(1));
+    this.admin.createTable(desc);
+
+    this.admin.disableTable(tableName);
+    Assert.assertTrue(TEST_UTIL2.getHBaseAdmin().isTableDisabled(tableName+"_hbase2"));
+    // enable the table and see if the table in the peer is also enabled
+    this.admin.enableTable(tableName);
+    Assert.assertTrue(TEST_UTIL2.getHBaseAdmin().isTableEnabled(tableName+"_hbase2"));
+    this.admin.deletePeers("hbase2");
+    TEST_UTIL3.shutdownMiniCluster();
+  }
 }
