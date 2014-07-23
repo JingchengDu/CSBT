@@ -616,9 +616,9 @@ Index: hbase-shell/src/main/ruby/hbase/crosssite_admin.rb
 +              split_algo = RegionSplitter.newSplitAlgoInstance(@conf, arg[SPLITALGO])
 +              splits = split_algo.split(JInteger.valueOf(num_regions))
 +            end
-+            if arg[CONFIG]
-+              raise(ArgumentError, "#{CONFIG} must be a Hash type") unless arg.kind_of?(Hash)
-+              for k,v in arg[CONFIG]
++            if arg[CONFIGURATION]
++              raise(ArgumentError, "#{CONFIGURATION} must be a Hash type") unless arg.kind_of?(Hash)
++              for k,v in arg[CONFIGURATION]
 +                v = v.to_s unless v.nil?
 +                htd.setValue(k, v)
 +              end
@@ -693,9 +693,9 @@ Index: hbase-shell/src/main/ruby/hbase/crosssite_admin.rb
 +        end
 +      end
 +
-+      if arg[CONFIG]
-+        raise(ArgumentError, "#{CONFIG} must be a Hash type") unless arg.kind_of?(Hash)
-+        for k,v in arg[CONFIG]
++      if arg[CONFIGURATION]
++        raise(ArgumentError, "#{CONFIGURATION} must be a Hash type") unless arg.kind_of?(Hash)
++        for k,v in arg[CONFIGURATION]
 +          v = v.to_s unless v.nil?
 +          family.setValue(k, v)
 +        end
@@ -724,7 +724,6 @@ Index: hbase-shell/src/main/ruby/hbase/crosssite_admin.rb
 +    end
 +  end
 +end
-\ No newline at end of file
 Index: hbase-shell/src/main/ruby/hbase.rb
 ===================================================================
 --- hbase-shell/src/main/ruby/hbase.rb	(revision 26264)
@@ -1579,7 +1578,7 @@ Index: hbase-shell/src/main/ruby/shell/commands/create_crosssitetable.rb
 +        return <<-EOF
 +Creates a cross-site table
 +
-+  hbase> create_crosssitetable 't1', {NAME => 'f1', VERSIONS => 5, LOCATOR=>''}
++  hbase> create_crosssitetable 't1', {NAME => 'f1', VERSIONS => 5, LOCATOR=>'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator'}
 +  hbase> create_crosssitetable 't1', {NAME => 'f1'}, {NAME => 'f2'}, {NAME => 'f3'}
 +  hbase> # The above in shorthand would be the following:
 +  hbase> create_crosssitetable 't1', 'f1', 'f2', 'f3'
@@ -1601,7 +1600,6 @@ Index: hbase-shell/src/main/ruby/shell/commands/create_crosssitetable.rb
 +    end
 +  end
 +end
-\ No newline at end of file
 Index: hbase-shell/src/main/ruby/shell/commands/list_cluster.rb
 ===================================================================
 --- hbase-shell/src/main/ruby/shell/commands/list_cluster.rb	(revision 0)
