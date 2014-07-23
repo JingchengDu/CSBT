@@ -78,6 +78,7 @@ import org.apache.hadoop.io.WritableUtils;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.base.Strings;
+import com.google.protobuf.ServiceException;
 
 /**
  * Provides an interface to manage cross site tables + general administrative functions. Use
@@ -880,9 +881,10 @@ public class CrossSiteHBaseAdmin implements Abortable {
    *          Peer cluster. Add the peer cluster name as first item in the Pair and peer cluster
    *          address as second item.
    * @throws IOException
+   * @throws ServiceException
    */
   public void addPeer(final String clusterName, final Pair<String, String> peer)
-      throws IOException {
+      throws IOException, ServiceException {
     if (peer == null || Strings.isNullOrEmpty(peer.getFirst())
         || Strings.isNullOrEmpty(peer.getSecond())) {
       throw new IllegalArgumentException("Peer should be specified");
@@ -907,6 +909,9 @@ public class CrossSiteHBaseAdmin implements Abortable {
           if (LOG.isDebugEnabled()) {
             LOG.debug("Creating replicated tables of " + clusterName + " in peer " + peer);
           }
+          Configuration clusterConf = new Configuration(conf);
+          ZKUtil.applyClusterKeyToConf(clusterConf, peer.getSecond());
+          HBaseAdmin.checkHBaseAvailable(clusterConf);
           String[] tableNames = znodes.getTableNames();
           if (tableNames != null && tableNames.length > 0) {
             createTablesInPeer(clusterName, tableNames, peer);
