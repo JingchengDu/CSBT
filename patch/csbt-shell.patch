@@ -649,7 +649,7 @@ Index: hbase-shell/src/main/ruby/hbase/crosssite_admin.rb
 +        if clusterLocator.nil?
 +          @crosssiteadmin.createTable(htd, splits)
 +        else
-+          @crosssiteadmin.createTable(htd, splits, clusterLocator)
++          @crosssiteadmin.createTable(htd, splits, clusterLocator, true)
 +        end
 +      end
 +    end
@@ -1578,7 +1578,7 @@ Index: hbase-shell/src/main/ruby/shell/commands/create_crosssitetable.rb
 +        return <<-EOF
 +Creates a cross-site table
 +
-+  hbase> create_crosssitetable 't1', {NAME => 'f1', VERSIONS => 5, LOCATOR=>'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator'}
++  hbase> create_crosssitetable 't1', {NAME => 'f1', VERSIONS => 5}
 +  hbase> create_crosssitetable 't1', {NAME => 'f1'}, {NAME => 'f2'}, {NAME => 'f3'}
 +  hbase> # The above in shorthand would be the following:
 +  hbase> create_crosssitetable 't1', 'f1', 'f2', 'f3'
@@ -1588,7 +1588,7 @@ Index: hbase-shell/src/main/ruby/shell/commands/create_crosssitetable.rb
 +  hbase> # Optionally pre-split the table into NUMREGIONS, using
 +  hbase> # SPLITALGO ("HexStringSplit", "UniformSplit" or classname)
 +  hbase> create_crosssitetable 't1', 'f1', {NUMREGIONS => 15, SPLITALGO => 'HexStringSplit'}
-+  hbase> create_crosssitetable 't1', 'f1', {LOCATOR => 'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator', LOCATOR_ARGS=>['5','7']}
++  hbase> create_crosssitetable 't1', 'f1', {SPLITS => ['10', '20]}, {LOCATOR => 'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator', LOCATOR_ARGS=>['5','7']}
 +
 +EOF
 +      end
