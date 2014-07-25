@@ -1588,7 +1588,7 @@ Index: hbase-shell/src/main/ruby/shell/commands/create_crosssitetable.rb
 +  hbase> # Optionally pre-split the table into NUMREGIONS, using
 +  hbase> # SPLITALGO ("HexStringSplit", "UniformSplit" or classname)
 +  hbase> create_crosssitetable 't1', 'f1', {NUMREGIONS => 15, SPLITALGO => 'HexStringSplit'}
-+  hbase> create_crosssitetable 't1', 'f1', {SPLITS => ['10', '20]}, {LOCATOR => 'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator', LOCATOR_ARGS=>['5','7']}
++  hbase> create_crosssitetable 't1', 'f1', {SPLITS => ['10', '20']}, {LOCATOR => 'org.apache.hadoop.hbase.crosssite.locator.SubstringClusterLocator', LOCATOR_ARGS=>['5','7']}
 +
 +EOF
 +      end
