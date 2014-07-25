@@ -889,6 +889,9 @@ public class CrossSiteHBaseAdmin implements Abortable {
         || Strings.isNullOrEmpty(peer.getSecond())) {
       throw new IllegalArgumentException("Peer should be specified");
     }
+    if (clusterName.equals(peer.getFirst())) {
+      throw new IllegalArgumentException("Peer's name should not be "+clusterName);
+    }
     if (LOG.isDebugEnabled()) {
       LOG.debug("Adding peer " + peer + " to the cluster " + clusterName);
     }
