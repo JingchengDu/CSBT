@@ -889,9 +889,7 @@ public class CrossSiteHBaseAdmin implements Abortable {
         || Strings.isNullOrEmpty(peer.getSecond())) {
       throw new IllegalArgumentException("Peer should be specified");
     }
-    if (clusterName.equals(peer.getFirst())) {
-      throw new IllegalArgumentException("Peer's name should not be "+clusterName);
-    }
+
     if (LOG.isDebugEnabled()) {
       LOG.debug("Adding peer " + peer + " to the cluster " + clusterName);
     }
@@ -904,6 +902,9 @@ public class CrossSiteHBaseAdmin implements Abortable {
           String clusterAddress = znodes.getClusterAddress(clusterName);
           if (clusterAddress == null) {
             throw new IllegalArgumentException("The cluster[" + clusterName + "] doesn't exist");
+          }
+          if (clusterAddress.equals(peer.getSecond())) {
+            throw new IllegalArgumentException("Could not add self as peer");
           }
           if (znodes.isPeerExists(clusterName, peer.getFirst())) {
             throw new IllegalArgumentException("The peer[" + peer + "] has been existent");
