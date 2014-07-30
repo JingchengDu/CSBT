@@ -906,9 +906,13 @@ public class CrossSiteHBaseAdmin implements Abortable {
           if (clusterAddress.equals(peer.getSecond())) {
             throw new IllegalArgumentException("Could not add self as peer");
           }
-          if (znodes.isPeerExists(clusterName, peer.getFirst()) ||
-               znodes.isPeerExists(clusterAddress, peer.getSecond())) {
-            throw new IllegalArgumentException("The peer[" + peer + "] has been existent");
+          if (znodes.isPeerExists(clusterName, peer.getFirst())) {
+            throw new IllegalArgumentException("The peer's name[" + peer + "] has been existent");
+          }
+          List<ClusterInfo> peers = znodes.getPeerClusters(clusterName);
+          for (ClusterInfo p : peers) {
+            if(peer.getSecond().equals(p.getAddress()))
+              throw new IllegalArgumentException("The peer's address[" + peer + "] has been existent");
           }
           // STEP 1 : Create all the replicated tables of source cluster in the peer cluster
           if (LOG.isDebugEnabled()) {
