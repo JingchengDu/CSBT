@@ -1275,7 +1275,7 @@ public class CrossSiteHBaseAdmin implements Abortable {
       for (ClusterInfo peer : clusterPeers) {
         if (peerMap.containsKey(peer.getName())) {
           boolean peerState = rAdmin.getPeerState(peer.getName());
-          if (peerState) {
+          if (!peerState) {
             rAdmin.enablePeer(peer.getName());
           } else {
             LOG.error("The peer " + peer.getName() + " Not in DISABLED state.");
