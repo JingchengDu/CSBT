@@ -33,18 +33,13 @@ EOF
         now = Time.now
         formatter.header([ "TABLE" ])
 
-        regex = /#{regex}/ unless regex.is_a?(Regexp)
-        list = crosssite_admin.list
-        if list != nil
-        	list.grep(regex)
-        	list.each do |table|
-          		formatter.row([ table ])
-        	end
-
-        	formatter.footer(now, list.size)
-        else 
-        	formatter.footer(now, 0)
+        list = crosssite_admin.list(regex)
+        list.each do |table|
+          formatter.row([ table ])
         end
+
+        formatter.footer(now, list.size)
+        return list
       end
     end
   end
