@@ -464,11 +464,14 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
         } else {
           try {
             return table.get(get);
+          } catch(IOException e1) {
+            LOG.error("Fail to get from peer.", e1);
+            throw e1;
           } finally {
             try {
               table.close();
-            } catch (IOException e1) {
-              LOG.warn("Fail to close the peer HTable", e1);
+            } catch (IOException e2) {
+              LOG.warn("Fail to close the peer HTable", e2);
             }
           }
         }
@@ -1511,6 +1514,11 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
       for (ClusterInfo peer : ci.getPeers()) {
         try {
           Configuration clusterConf = getCrossSiteConf(this.configuration, peer.getAddress());
+          try {
+            HBaseAdmin.checkHBaseAvailable(clusterConf);
+          } catch (Exception e) {
+            continue;
+          }
           HTableInterface table = null;
           try {
             table = this.hTableFactory.createHTableInterface(clusterConf, Bytes
