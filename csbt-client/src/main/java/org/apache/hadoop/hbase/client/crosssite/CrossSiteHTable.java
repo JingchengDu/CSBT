@@ -1511,7 +1511,10 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
       String clusterName) {
     ClusterInfo ci = clusterInfos.get(clusterName);
     if (ci != null) {
-      for (ClusterInfo peer : ci.getPeers()) {
+      List<ClusterInfo> allClusters = new ArrayList<ClusterInfo>();
+      allClusters.addAll(ci.getPeers());
+      allClusters.add(ci);
+      for (ClusterInfo peer : allClusters) {
         try {
           Configuration clusterConf = getCrossSiteConf(this.configuration, peer.getAddress());
           try {
