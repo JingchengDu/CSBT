@@ -1490,9 +1490,9 @@ public class CrossSiteHTable implements CrossSiteHTableInterface, HTableInterfac
       throw new IllegalArgumentException("No columns to insert");
     }
     if (maxKeyValueSize > 0) {
-      for (List<KeyValue> list : put.getFamilyMap().values()) {
-        for (KeyValue kv : list) {
-          if (kv.getLength() > maxKeyValueSize) {
+      for (List<Cell> list : put.getFamilyCellMap().values()) {
+        for (Cell cell : list) {
+          if (cell.getValueLength() > maxKeyValueSize) {
             throw new IllegalArgumentException("KeyValue size too large");
           }
         }
