@@ -922,9 +922,18 @@ public class CrossSiteZNodes {
    * @throws KeeperException
    */
   public String[] getTableNames() throws KeeperException {
+    List<String> results = Collections.emptyList();
     List<String> tableNames = ZKUtil.listChildrenNoWatch(zkw, this.tablesZNode);
-    String[] emptyArray = new String[0];
-    return tableNames == null ? emptyArray : tableNames.toArray(emptyArray);
+    if (tableNames != null && !tableNames.isEmpty()) {
+      results = new ArrayList<String>();
+      for (String tableName : tableNames) {
+        byte[] data = ZKUtil.getData(this.zkw, getTableDescZNode(tableName));
+        if (data != null) {
+          results.add(tableName);
+        }
+      }
+    }
+    return results.toArray(new String[0]);
   }
 
   /**
@@ -942,7 +951,10 @@ public class CrossSiteZNodes {
       results = new ArrayList<String>();
       for (String tableName : tableNames) {
         if (pattern.matcher(tableName).matches()) {
-          results.add(tableName);
+          byte[] data = ZKUtil.getData(this.zkw, getTableDescZNode(tableName));
+          if (data != null) {
+            results.add(tableName);
+          }
         }
       }
     }
